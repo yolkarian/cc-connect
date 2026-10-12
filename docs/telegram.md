@@ -235,6 +235,28 @@ cc-connect: Here's the project structure...
 
 ---
 
+## Streaming cards
+
+Enable the Feishu-style rich-card layout in the global display settings:
+
+```toml
+[display]
+mode = "quiet"
+card_mode = "rich"
+thinking_messages = true
+tool_messages = true
+reply_footer = true
+```
+
+Each turn has one expandable **Reasoning** blockquote and one expandable
+**Tools** blockquote when those channels contain events. The answer streams
+below both panels; completion adds the status footer. Telegram clients
+supporting expandable blockquotes can unfold each panel independently.
+
+ACP `agent_thought_chunk` notifications are mapped to the reasoning channel,
+not to answer text. `agent_message_chunk` notifications remain answer text.
+This follows protocol labels rather than guessing from a model's wording.
+
 ## Architecture
 
 ```

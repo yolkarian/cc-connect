@@ -179,6 +179,72 @@ func TestMapSessionUpdate_reasoningChunk(t *testing.T) {
 	}
 }
 
+func TestMapSessionUpdate_AgentThoughtChunkNeverBecomesAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{"standard", `"content":{"type":"text","text":"THOUGHT_ONLY"}`},
+		{"untyped text", `"content":{"text":"THOUGHT_ONLY"}`},
+		{"top-level text", `"text":"THOUGHT_ONLY"`},
+		{"string content", `"content":"THOUGHT_ONLY"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := json.RawMessage(`{"update":{"sessionUpdate":"agent_thought_chunk",` + tc.content + `}}`)
+			events := mapSessionUpdate("resumed-session", params)
+			if len(events) != 1 || events[0].Type != core.EventThinking ||
+				events[0].Content != "THOUGHT_ONLY" || events[0].SessionID != "resumed-session" {
+				t.Fatalf("thought mapped incorrectly: %+v", events)
+			}
+		})
+	}
+}
+
+func TestMapSessionUpdate_ThoughtToolsAndAnswerStaySeparate(t *testing.T) {
+	updates := []string{
+		`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"THOUGHT_1"}}`,
+		`{"sessionUpdate":"tool_call","toolCallId":"tool1","title":"Bash","kind":"execute","status":"pending"}`,
+		`{"sessionUpdate":"tool_call_update","toolCallId":"tool1","title":"Bash","status":"completed","content":[{"type":"content","content":{"type":"text","text":"TOOL_RESULT"}}]}`,
+		`{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"THOUGHT_2"}}`,
+		`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ANSWER_ONLY"}}`,
+	}
+	var answer, thinking string
+	var toolEvents int
+	for _, update := range updates {
+		params := json.RawMessage(`{"sessionId":"original-session","update":` + update + `}`)
+		for _, event := range mapSessionUpdate("", params) {
+			if event.SessionID != "original-session" {
+				t.Fatalf("session ID changed: %+v", event)
+			}
+			switch event.Type {
+			case core.EventThinking:
+				thinking += event.Content
+			case core.EventText:
+				answer += event.Content
+			case core.EventToolUse, core.EventToolResult:
+				toolEvents++
+			default:
+				t.Fatalf("unexpected event: %+v", event)
+			}
+		}
+	}
+	if answer != "ANSWER_ONLY" || thinking != "THOUGHT_1THOUGHT_2" || toolEvents != 2 {
+		t.Fatalf("mixed channels: answer=%q thinking=%q tools=%d", answer, thinking, toolEvents)
+	}
+}
+
+func TestMapSessionUpdate_EmptyThoughtChunk(t *testing.T) {
+	for _, content := range []string{
+		`{"type":"text","text":""}`,
+		`{"type":"image","data":"fixture","mimeType":"image/png"}`,
+	} {
+		params := json.RawMessage(`{"update":{"sessionUpdate":"agent_thought_chunk","content":` + content + `}}`)
+		if events := mapSessionUpdate("session", params); len(events) != 0 {
+			t.Fatalf("empty/non-text thought generated events: %+v", events)
+		}
+	}
+}
+
 func TestMapSessionUpdate_toolCall(t *testing.T) {
 	params := json.RawMessage(`{
 		"sessionId": "s1",

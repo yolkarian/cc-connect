@@ -81,6 +81,38 @@ func TestTelegramBuildRichCardStates(t *testing.T) {
 	}
 }
 
+func TestTelegramBuildRichCardHasSeparateReasoningAndToolFolds(t *testing.T) {
+	p := &Platform{}
+	steps := []core.ToolStep{
+		{Kind: core.ToolStepKindThinking, Summary: "THOUGHT_1", Done: true},
+		{Kind: core.ToolStepKindTool, Name: "Bash", Summary: "TOOL_CALL", Result: "TOOL_RESULT", Done: true},
+		{Kind: core.ToolStepKindThinking, Summary: "THOUGHT_2", Done: true},
+	}
+	for _, streaming := range []bool{true, false} {
+		card := p.BuildRichCard(core.CardStatusWorking, "", steps, "ANSWER_ONLY", streaming, "")
+		html := core.MarkdownToSimpleHTML(card)
+		if strings.Count(html, "<blockquote expandable>") != 2 {
+			t.Fatalf("want one reasoning fold and one tool fold, got %s", html)
+		}
+		parts := strings.Split(html, "</blockquote>")
+		if len(parts) != 3 {
+			t.Fatalf("unexpected panel structure: %s", html)
+		}
+		if !strings.Contains(parts[0], "THOUGHT_1") || !strings.Contains(parts[0], "THOUGHT_2") ||
+			strings.Contains(parts[0], "TOOL_CALL") || strings.Contains(parts[0], "ANSWER_ONLY") {
+			t.Fatalf("reasoning panel contains the wrong channel: %s", html)
+		}
+		if !strings.Contains(parts[1], "TOOL_CALL") || !strings.Contains(parts[1], "TOOL_RESULT") ||
+			strings.Contains(parts[1], "THOUGHT_") || strings.Contains(parts[1], "ANSWER_ONLY") {
+			t.Fatalf("tool panel contains the wrong channel: %s", html)
+		}
+		if !strings.Contains(parts[2], "ANSWER_ONLY") || strings.Contains(parts[2], "THOUGHT_") ||
+			strings.Contains(parts[2], "TOOL_") {
+			t.Fatalf("answer body contains panel content: %s", html)
+		}
+	}
+}
+
 func TestTelegramBuildRichCardCollapsesOldSteps(t *testing.T) {
 	p := &Platform{}
 	steps := make([]core.ToolStep, 0, 16)

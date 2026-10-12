@@ -2327,6 +2327,69 @@ func TestCUJ_STREAM1_StreamingResumesAfterPermissionPrompt(t *testing.T) {
 	}
 }
 
+func TestCUJ_H5_TelegramWorkspaceSwitchRestoresProjectHistory(t *testing.T) {
+	baseDir, stateDir := t.TempDir(), t.TempDir()
+	for _, name := range []string{"project-a", "project-b"} {
+		if err := os.MkdirAll(filepath.Join(baseDir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const agentName = "cuj-telegram-workspace-agent"
+	RegisterAgent(agentName, func(map[string]any) (Agent, error) {
+		return &namedTestAgent{name: agentName}, nil
+	})
+	p := &stubPlatformEngine{n: "telegram"}
+	newEngine := func() *Engine {
+		e := NewEngine("workspace", &namedTestAgent{name: agentName}, []Platform{p},
+			filepath.Join(stateDir, "sessions.json"), LangEnglish)
+		e.SetMultiWorkspace(baseDir, filepath.Join(stateDir, "bindings.json"))
+		t.Cleanup(e.cancel)
+		return e
+	}
+	e := newEngine()
+	const sessionKey = "telegram:123:123"
+	// These records stand in for previously persisted conversations.
+	for _, name := range []string{"project-a", "project-b"} {
+		_, sessions, err := e.getOrCreateWorkspaceAgent(normalizeWorkspacePath(filepath.Join(baseDir, name)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		session := sessions.GetOrCreateActive(sessionKey)
+		session.AddHistory("user", name+"-HISTORY")
+		session.SetAgentSessionID(name+"-UUID", agentName)
+		sessions.Save()
+	}
+	send := func(command string) string {
+		p.clearSent()
+		e.ReceiveMessage(p, &Message{SessionKey: sessionKey, Platform: "telegram",
+			UserID: "123", Content: command, ReplyCtx: "ctx"})
+		return strings.Join(p.getSent(), "\n")
+	}
+	assertHistory := func(want, unwanted string) {
+		t.Helper()
+		got := send("/history")
+		if !strings.Contains(got, want+"-HISTORY") || strings.Contains(got, unwanted+"-HISTORY") {
+			t.Fatalf("workspace history mixed or lost: %q", got)
+		}
+	}
+	// One chat switches A -> B -> A, with project-local histories each time.
+	send("/ws bind project-a")
+	assertHistory("project-a", "project-b")
+	send("/ws bind project-b")
+	assertHistory("project-b", "project-a")
+	send("/ws bind project-a")
+	assertHistory("project-a", "project-b")
+	// Reload bindings and session managers as after a container restart.
+	e.cancel()
+	e = newEngine()
+	if got := send("/ws"); !strings.Contains(got, normalizeWorkspacePath(filepath.Join(baseDir, "project-a"))) {
+		t.Fatalf("workspace binding was not persistent: %q", got)
+	}
+	assertHistory("project-a", "project-b")
+	send("/ws bind project-b")
+	assertHistory("project-b", "project-a")
+}
+
 func TestCUJ_H4_FeishuTopicsKeepWorkspaceBindingsIsolated(t *testing.T) {
 	baseDir := t.TempDir()
 	defaultWorkspace := normalizeWorkspacePath(filepath.Join(baseDir, "workspace-default"))

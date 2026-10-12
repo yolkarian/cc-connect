@@ -33,7 +33,9 @@ func mapSessionUpdate(sessionID string, params json.RawMessage) []core.Event {
 
 	switch head.SessionUpdate {
 	case "agent_message_chunk":
-		return mapAgentMessageChunk(sid, wrap.Update)
+		return mapTextChunk(sid, wrap.Update, core.EventText)
+	case "agent_thought_chunk":
+		return mapTextChunk(sid, wrap.Update, core.EventThinking)
 	case "tool_call":
 		return mapToolCall(sid, wrap.Update)
 	case "tool_call_update":
@@ -49,13 +51,14 @@ func mapSessionUpdate(sessionID string, params json.RawMessage) []core.Event {
 	}
 }
 
-// mapAgentMessageChunk handles agent_message_chunk and user_message_chunk updates.
+// mapTextChunk extracts text from assistant message or thought chunks without
+// losing their event type. ACP thoughts must never enter the answer body.
 // It supports multiple JSON formats for broader vendor compatibility:
 // - Standard ACP: {"content": {"type": "text", "text": "..."}}
 // - Alternative: {"content": {"text": "..."}} (type omitted)
 // - Alternative: {"text": "..."} (top-level text field)
 // - Alternative: {"content": "..."} (content as string)
-func mapAgentMessageChunk(sessionID string, update json.RawMessage) []core.Event {
+func mapTextChunk(sessionID string, update json.RawMessage, eventType core.EventType) []core.Event {
 	// Try standard ACP format first
 	var u struct {
 		Content struct {
@@ -65,7 +68,7 @@ func mapAgentMessageChunk(sessionID string, update json.RawMessage) []core.Event
 	}
 	if err := json.Unmarshal(update, &u); err == nil && u.Content.Text != "" {
 		return []core.Event{{
-			Type:      core.EventText,
+			Type:      eventType,
 			Content:   u.Content.Text,
 			SessionID: sessionID,
 		}}
@@ -79,7 +82,7 @@ func mapAgentMessageChunk(sessionID string, update json.RawMessage) []core.Event
 	}
 	if err := json.Unmarshal(update, &alt1); err == nil && alt1.Content.Text != "" {
 		return []core.Event{{
-			Type:      core.EventText,
+			Type:      eventType,
 			Content:   alt1.Content.Text,
 			SessionID: sessionID,
 		}}
@@ -91,7 +94,7 @@ func mapAgentMessageChunk(sessionID string, update json.RawMessage) []core.Event
 	}
 	if err := json.Unmarshal(update, &alt2); err == nil && alt2.Text != "" {
 		return []core.Event{{
-			Type:      core.EventText,
+			Type:      eventType,
 			Content:   alt2.Text,
 			SessionID: sessionID,
 		}}
@@ -103,14 +106,14 @@ func mapAgentMessageChunk(sessionID string, update json.RawMessage) []core.Event
 	}
 	if err := json.Unmarshal(update, &alt3); err == nil && alt3.Content != "" {
 		return []core.Event{{
-			Type:      core.EventText,
+			Type:      eventType,
 			Content:   alt3.Content,
 			SessionID: sessionID,
 		}}
 	}
 
 	// Log unknown format for debugging
-	slog.Debug("acp: mapAgentMessageChunk: unknown format", "update", string(update))
+	slog.Debug("acp: mapTextChunk: unknown format", "update", string(update))
 	return nil
 }
 

@@ -89,7 +89,6 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		cancel:        cancel,
 		permByID:      make(map[string]permState),
 		toolInputByID: make(map[string]string),
-		acpSessID:     cfg.resumeSessionID,
 		callbacks:     cfg.callbacks,
 	}
 	s.alive.Store(true)
@@ -205,7 +204,10 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 	}
 
 	wantResume := resumeSessionID != "" && resumeSessionID != core.ContinueSession
-	if wantResume && initOut.AgentCapabilities.LoadSession {
+	if wantResume {
+		if !initOut.AgentCapabilities.LoadSession {
+			return fmt.Errorf("acp: server does not support session/load")
+		}
 		loadParams := map[string]any{
 			"sessionId":  resumeSessionID,
 			"cwd":        s.workDir,
@@ -213,18 +215,19 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 		}
 		loadRes, err := s.tr.call(s.ctx, "session/load", loadParams)
 		if err != nil {
-			slog.Warn("acp: session/load failed, starting new session", "error", err)
-		} else {
-			var lr struct {
-				SessionID string         `json:"sessionId"`
-				Modes     *acpModesBlock `json:"modes"`
-			}
-			if json.Unmarshal(loadRes, &lr) == nil && lr.SessionID != "" {
-				s.setACPSessionID(lr.SessionID)
-				s.absorbModes(lr.Modes)
-				return nil
-			}
+			return fmt.Errorf("acp: session/load: %w", err)
 		}
+		var lr struct {
+			Modes *acpModesBlock `json:"modes"`
+		}
+		if err := json.Unmarshal(loadRes, &lr); err != nil {
+			return fmt.Errorf("acp: parse session/load: %w", err)
+		}
+		// ACP LoadSessionResponse does not contain sessionId. A successful
+		// load keeps the requested ID; only session/new allocates an ID.
+		s.setACPSessionID(resumeSessionID)
+		s.absorbModes(lr.Modes)
+		return nil
 	}
 
 	newParams := map[string]any{
@@ -370,9 +373,14 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 		slog.Debug("acp: notification", "method", method)
 		return
 	}
-	s.cacheToolCallInput(params)
 	s.maybeAbsorbCurrentModeUpdate(params)
 	sid := s.currentACPSessionID()
+	// session/load replays historical updates before its response. The
+	// engine has already stored that history; it is not a new bot reply.
+	if sid == "" {
+		return
+	}
+	s.cacheToolCallInput(params)
 	// Debug log to capture raw session/update JSON for troubleshooting vendor compatibility
 	slog.Debug("acp: session/update", "session_id", sid, "params", string(params))
 	for _, ev := range mapSessionUpdate(sid, params) {

@@ -256,6 +256,11 @@ supporting expandable blockquotes can unfold each panel independently.
 ACP `agent_thought_chunk` notifications are mapped to the reasoning channel,
 not to answer text. `agent_message_chunk` notifications remain answer text.
 This follows protocol labels rather than guessing from a model's wording.
+Continuous ACP thought deltas update a single reasoning block, preserving
+word spacing, punctuation, paragraphs, and newlines. The reasoning panel uses
+one heading icon, not a thinking emoji before each line. Tool calls remain
+individually counted and status-marked. `thinking_max_len` caps the accumulated
+reasoning preview rather than independently treating each token as a step.
 
 ## Architecture
 

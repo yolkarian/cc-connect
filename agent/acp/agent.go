@@ -32,7 +32,9 @@ type Agent struct {
 	// mode is the pending permission mode to apply to new sessions.
 	// When set, StartSession applies it via session/set_mode right after
 	// session/new. Empty means "use whatever the agent selects by default".
-	mode string
+	mode            string
+	model           string
+	reasoningEffort string
 
 	// listUnsupported caches a negative result after we probe the agent
 	// for sessionCapabilities.list once. Eliminates spawn cost on
@@ -45,9 +47,9 @@ type Agent struct {
 	// handshake so that future PermissionModes() calls can reflect the
 	// actual modes this specific ACP agent offers (rather than a
 	// hard-coded fallback that may not match).
-	modesMu       sync.RWMutex
-	modesCache    []core.PermissionModeInfo
-	modesCurrent  string
+	modesMu      sync.RWMutex
+	modesCache   []core.PermissionModeInfo
+	modesCurrent string
 
 	mu sync.RWMutex
 }
@@ -93,17 +95,21 @@ func New(opts map[string]any) (core.Agent, error) {
 	}
 	mode, _ := opts["mode"].(string)
 	mode = strings.TrimSpace(mode)
+	model, _ := opts["model"].(string)
+	reasoning, _ := opts["reasoning_effort"].(string)
 
 	return &Agent{
-		workDir:     workDir,
-		cmd:          cmdStr,
-		cliExtraArgs: cliExtraArgs,
-		args:        args,
-		staticEnv:   staticEnv,
-		extraEnv:    extra,
-		authMethod:  authMethod,
-		displayName: displayName,
-		mode:        mode,
+		workDir:         workDir,
+		cmd:             cmdStr,
+		cliExtraArgs:    cliExtraArgs,
+		args:            args,
+		staticEnv:       staticEnv,
+		extraEnv:        extra,
+		authMethod:      authMethod,
+		displayName:     displayName,
+		mode:            mode,
+		model:           strings.TrimSpace(model),
+		reasoningEffort: strings.TrimSpace(reasoning),
 	}, nil
 }
 
@@ -177,6 +183,34 @@ func parseStringSlice(v any) []string {
 
 func (a *Agent) Name() string { return "acp" }
 
+func (a *Agent) SupportsSessionModelControl() bool { return true }
+
+// Preferences are applied after a successful native new/load handshake. The
+// engine changes them only after a live session acknowledges a selection.
+func (a *Agent) SetModel(model string) {
+	a.mu.Lock()
+	a.model = model
+	a.mu.Unlock()
+}
+
+func (a *Agent) GetModel() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.model
+}
+
+func (a *Agent) SetReasoningEffort(effort string) {
+	a.mu.Lock()
+	a.reasoningEffort = effort
+	a.mu.Unlock()
+}
+
+func (a *Agent) GetReasoningEffort() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.reasoningEffort
+}
+
 func (a *Agent) SetWorkDir(dir string) {
 	a.mu.Lock()
 	a.workDir = dir
@@ -213,6 +247,12 @@ func (a *Agent) WorkspaceAgentOptions() map[string]any {
 	if a.displayName != "" {
 		opts["display_name"] = a.displayName
 	}
+	if a.model != "" {
+		opts["model"] = a.model
+	}
+	if a.reasoningEffort != "" {
+		opts["reasoning_effort"] = a.reasoningEffort
+	}
 	return opts
 }
 
@@ -229,19 +269,23 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	workDir := a.workDir
 	authMethod := a.authMethod
 	pendingMode := a.mode
+	pendingModel := a.model
+	pendingReasoning := a.reasoningEffort
 	extra := append([]string(nil), a.extraEnv...)
 	extra = append(extra, a.sessionEnv...)
 	a.mu.RUnlock()
 
 	return newACPSession(ctx, acpSessionConfig{
-		command:         command,
-		args:            allArgs,
-		extraEnv:        extra,
-		workDir:         workDir,
-		resumeSessionID: sessionID,
-		authMethod:      authMethod,
-		initialMode:     pendingMode,
-		callbacks:       a,
+		command:          command,
+		args:             allArgs,
+		extraEnv:         extra,
+		workDir:          workDir,
+		resumeSessionID:  sessionID,
+		authMethod:       authMethod,
+		initialMode:      pendingMode,
+		initialModel:     pendingModel,
+		initialReasoning: pendingReasoning,
+		callbacks:        a,
 	})
 }
 

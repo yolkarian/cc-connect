@@ -475,6 +475,31 @@ type MemoryFileProvider interface {
 	GlobalMemoryFile() string  // user-level instruction file (e.g., ~/.claude/CLAUDE.md)
 }
 
+// SessionModelControlProvider opts an agent into native, session-scoped model
+// controls. The engine starts/resumes the active conversation to discover them;
+// it never substitutes another conversation when that resume fails.
+type SessionModelControlProvider interface {
+	SupportsSessionModelControl() bool
+}
+
+// ModelControls is a snapshot of the backend's actual current selections and
+// available choices. Reasoning choices may change when the model changes.
+type ModelControls struct {
+	CurrentModel           string
+	Models                 []ModelOption
+	CurrentReasoningEffort string
+	ReasoningEfforts       []string
+}
+
+// SessionModelController changes configuration in place, returning only after
+// the backend acknowledges the new value. Implementations must preserve the
+// session identity and must not synthesize answer events from config updates.
+type SessionModelController interface {
+	ModelControls() ModelControls
+	SetSessionModel(ctx context.Context, model string) error
+	SetSessionReasoningEffort(ctx context.Context, effort string) error
+}
+
 // ModelSwitcher is an optional interface for agents that support runtime model switching.
 // Model changes take effect on the next session (existing sessions keep their model).
 type ModelSwitcher interface {

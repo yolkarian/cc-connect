@@ -47,7 +47,7 @@ func TestTelegramBuildRichCardStates(t *testing.T) {
 			markdown:  "正文内容",
 			streaming: true,
 			wantSubs: []string{
-				"**⏳ 正在运行…**", "> [!fold] 💭 推理 (1)", "> 🤔 先检查目录",
+				"**⏳ 正在运行…**", "> [!fold] 💭 推理 (1)", "> 先检查目录",
 				"> [!fold] 🔧 工具 (2)", "> 🔧 **Bash** — git status --short ⏳",
 				"> 🔧 **Read** — 文件读取 ✓", "\n正文内容",
 			},
@@ -78,6 +78,23 @@ func TestTelegramBuildRichCardStates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTelegramReasoningPanel_PreservesParagraphsWithoutPerLineEmoji(t *testing.T) {
+	p := &Platform{}
+	thought := "I should respond\nbriefly with confirmation.\n\nSecond paragraph."
+	steps := []core.ToolStep{{Kind: core.ToolStepKindThinking, Summary: thought, Done: true}}
+	for _, streaming := range []bool{true, false} {
+		card := p.BuildRichCard(core.CardStatusWorking, "", steps, "ANSWER_ONLY", streaming, "")
+		html := core.MarkdownToSimpleHTML(card)
+		reasoning := strings.Split(html, "</blockquote>")[0]
+		if !strings.Contains(reasoning, thought) || strings.Count(reasoning, "💭") != 1 || strings.Contains(reasoning, "🤔") {
+			t.Fatalf("reasoning paragraphs were flattened or decorated per line: %s", html)
+		}
+		if strings.Contains(reasoning, "ANSWER_ONLY") {
+			t.Fatal("answer leaked into reasoning")
+		}
 	}
 }
 

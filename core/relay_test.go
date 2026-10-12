@@ -435,63 +435,35 @@ func TestHandleRelay_TimeoutWithoutTextReturnsContextError(t *testing.T) {
 	}
 }
 
-// relayFallbackAgent fails the first StartSession call (simulating a corrupt
-// resume) and returns freshSession on the second call (fresh start).
-type relayFallbackAgent struct {
-	callCount    int
-	freshSession AgentSession
-}
+type relayResumeFailureAgent struct{ calls []string }
 
-func (a *relayFallbackAgent) Name() string { return "fallback" }
-func (a *relayFallbackAgent) StartSession(_ context.Context, sessionID string) (AgentSession, error) {
-	a.callCount++
-	if a.callCount == 1 && sessionID != "" {
-		return nil, fmt.Errorf("simulated resume failure")
-	}
-	return a.freshSession, nil
+func (a *relayResumeFailureAgent) Name() string { return "resume-error" }
+func (a *relayResumeFailureAgent) StartSession(_ context.Context, sessionID string) (AgentSession, error) {
+	a.calls = append(a.calls, sessionID)
+	return nil, fmt.Errorf("simulated resume failure")
 }
-func (a *relayFallbackAgent) ListSessions(_ context.Context) ([]AgentSessionInfo, error) {
+func (a *relayResumeFailureAgent) ListSessions(_ context.Context) ([]AgentSessionInfo, error) {
 	return nil, nil
 }
-func (a *relayFallbackAgent) Stop() error { return nil }
+func (a *relayResumeFailureAgent) Stop() error { return nil }
 
-func TestHandleRelay_ResumeFailureFallsBackToFreshSession(t *testing.T) {
+func TestHandleRelay_ResumeFailurePreservesConversation(t *testing.T) {
 	e := newTestEngine()
-	freshSession := newControllableSession("fresh-session")
-
-	e.agent = &relayFallbackAgent{freshSession: freshSession}
-
-	// Pre-set a stale session ID so that the first StartSession tries to resume.
+	agent := &relayResumeFailureAgent{}
+	e.agent = agent
 	sourceSessionKey := "test:chat-1:user"
 	relaySessionKey := "relay:source:test:chat-1"
 	sess := e.sessions.GetOrCreateActive(relaySessionKey)
-	sess.SetAgentSessionID("stale-id", "fallback")
+	sess.SetAgentSessionID("saved-id", agent.Name())
+	sess.AddHistory("user", "original history")
 	e.sessions.Save()
 
-	ctx := context.Background()
-	done := make(chan string, 1)
-	go func() {
-		resp, err := e.HandleRelay(ctx, "source", sourceSessionKey, "hello")
-		if err != nil {
-			done <- "error: " + err.Error()
-			return
-		}
-		done <- resp
-	}()
-
-	// The fresh session should receive the message and respond.
-	freshSession.events <- Event{Type: EventResult, Content: "recovered", SessionID: "fresh-session", Done: true}
-
-	got := <-done
-	if got != "recovered" {
-		t.Fatalf("HandleRelay() = %q, want %q", got, "recovered")
+	_, err := e.HandleRelay(context.Background(), "source", sourceSessionKey, "hello")
+	if err == nil || !strings.Contains(err.Error(), "simulated resume failure") {
+		t.Fatalf("HandleRelay error = %v", err)
 	}
-
-	// Session should be closed after EventResult.
-	select {
-	case <-freshSession.closed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("session was not closed after EventResult")
+	if len(agent.calls) != 1 || agent.calls[0] != "saved-id" || sess.GetAgentSessionID() != "saved-id" || len(sess.GetHistory(0)) != 1 {
+		t.Fatalf("relay lost its saved conversation: calls=%v id=%q", agent.calls, sess.GetAgentSessionID())
 	}
 }
 

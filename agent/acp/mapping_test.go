@@ -193,7 +193,7 @@ func TestMapSessionUpdate_AgentThoughtChunkNeverBecomesAnswer(t *testing.T) {
 			params := json.RawMessage(`{"update":{"sessionUpdate":"agent_thought_chunk",` + tc.content + `}}`)
 			events := mapSessionUpdate("resumed-session", params)
 			if len(events) != 1 || events[0].Type != core.EventThinking ||
-				events[0].Content != "THOUGHT_ONLY" || events[0].SessionID != "resumed-session" {
+				events[0].Content != "THOUGHT_ONLY" || events[0].SessionID != "resumed-session" || !events[0].ThinkingDelta {
 				t.Fatalf("thought mapped incorrectly: %+v", events)
 			}
 		})

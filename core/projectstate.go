@@ -9,9 +9,10 @@ import (
 )
 
 type projectStateData struct {
-	WorkDirOverride         string            `json:"work_dir_override,omitempty"`
-	WorkspaceDirOverrides   map[string]string `json:"workspace_dir_overrides,omitempty"`
-	WorkspaceModelOverrides map[string]string `json:"workspace_model_overrides,omitempty"`
+	WorkDirOverride             string            `json:"work_dir_override,omitempty"`
+	WorkspaceDirOverrides       map[string]string `json:"workspace_dir_overrides,omitempty"`
+	WorkspaceModelOverrides     map[string]string `json:"workspace_model_overrides,omitempty"`
+	WorkspaceReasoningOverrides map[string]string `json:"workspace_reasoning_overrides,omitempty"`
 }
 
 // ProjectStateStore persists lightweight runtime state for one project.
@@ -91,6 +92,25 @@ func (ps *ProjectStateStore) SetWorkspaceModelOverride(workspace, model string) 
 		ps.state.WorkspaceModelOverrides = make(map[string]string)
 	}
 	ps.state.WorkspaceModelOverrides[workspace] = model
+}
+
+func (ps *ProjectStateStore) WorkspaceReasoningOverride(workspace string) string {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	return ps.state.WorkspaceReasoningOverrides[workspace]
+}
+
+func (ps *ProjectStateStore) SetWorkspaceReasoningOverride(workspace, effort string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if effort == "" {
+		delete(ps.state.WorkspaceReasoningOverrides, workspace)
+		return
+	}
+	if ps.state.WorkspaceReasoningOverrides == nil {
+		ps.state.WorkspaceReasoningOverrides = make(map[string]string)
+	}
+	ps.state.WorkspaceReasoningOverrides[workspace] = effort
 }
 
 func (ps *ProjectStateStore) ClearWorkspaceModelOverride(workspace string) {

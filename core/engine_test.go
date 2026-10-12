@@ -5464,7 +5464,7 @@ func TestCmdReasoning_UsesInlineButtonsOnButtonOnlyPlatform(t *testing.T) {
 	}
 }
 
-func TestCmdReasoning_SwitchesEffortAndResetsSession(t *testing.T) {
+func TestCmdReasoning_SwitchesEffortAndPreservesSession(t *testing.T) {
 	p := &stubPlatformEngine{n: "plain"}
 	agent := &stubModelModeAgent{}
 	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
@@ -5479,11 +5479,11 @@ func TestCmdReasoning_SwitchesEffortAndResetsSession(t *testing.T) {
 	if agent.reasoningEffort != "high" {
 		t.Fatalf("reasoning effort = %q, want high", agent.reasoningEffort)
 	}
-	if s.GetAgentSessionID() != "" {
-		t.Fatalf("AgentSessionID = %q, want cleared", s.GetAgentSessionID())
+	if s.GetAgentSessionID() != "existing-session" {
+		t.Fatalf("AgentSessionID = %q, want existing-session", s.GetAgentSessionID())
 	}
-	if len(s.History) != 0 {
-		t.Fatalf("history length = %d, want 0", len(s.History))
+	if len(s.GetHistory(0)) != 1 {
+		t.Fatalf("history length = %d, want 1", len(s.GetHistory(0)))
 	}
 	if len(p.sent) != 1 || !strings.Contains(p.sent[0], "Reasoning effort switched to `high`") {
 		t.Fatalf("sent = %v, want reasoning changed message", p.sent)
@@ -5541,8 +5541,11 @@ func TestCmdReasoning_MultiWorkspaceSavesToWorkspaceSessions(t *testing.T) {
 	if wsAgent.reasoningEffort != "high" {
 		t.Fatalf("workspace agent reasoning effort = %q, want high", wsAgent.reasoningEffort)
 	}
-	if got := wsSession.GetAgentSessionID(); got != "" {
-		t.Fatalf("workspace session id = %q, want cleared", got)
+	if got := wsSession.GetAgentSessionID(); got != "ws-session-id" {
+		t.Fatalf("workspace session id = %q, want ws-session-id", got)
+	}
+	if len(wsSession.GetHistory(0)) != 1 {
+		t.Fatal("workspace history was reset")
 	}
 	if got := globalSession.GetAgentSessionID(); got != "global-session-id" {
 		t.Fatalf("global session id = %q, want untouched", got)
@@ -7839,11 +7842,8 @@ func TestCmdStop_PreservesAgentSessionID(t *testing.T) {
 	}
 }
 
-// TestResumeFallback_ClearsStaleSessionID verifies that when agent.StartSession
-// fails with a stale session ID and falls back to a fresh session, the stale
-// AgentSessionID is cleared so CompareAndSetAgentSessionID can write the new ID
-// (issue #830, matching the relay fallback at engine.go:12640).
-func TestResumeFallback_ClearsStaleSessionID(t *testing.T) {
+// An explicit failed resume must retain the binding for a later retry.
+func TestResumeFailure_PreservesSavedSessionID(t *testing.T) {
 	freshSess := newControllableSession("fresh-id")
 	agent := &controllableAgent{
 		startSessionFn: func(_ context.Context, sessionID string) (AgentSession, error) {
@@ -7863,15 +7863,11 @@ func TestResumeFallback_ClearsStaleSessionID(t *testing.T) {
 
 	state := e.getOrCreateInteractiveStateWith(key, p, "ctx", session, e.sessions, nil, "")
 
-	// The new agent session should be the fresh one.
-	if state.agentSession != freshSess {
-		t.Fatal("expected fresh agent session from fallback")
+	if state.agentSession != nil || state.startError == nil {
+		t.Fatal("expected the explicit resume error")
 	}
-
-	// The stale ID should have been replaced with the new ID.
-	got := session.GetAgentSessionID()
-	if got != "fresh-id" {
-		t.Fatalf("AgentSessionID = %q, want %q — stale ID should be replaced", got, "fresh-id")
+	if got := session.GetAgentSessionID(); got != "stale-id" {
+		t.Fatalf("AgentSessionID = %q, want stale-id", got)
 	}
 }
 
@@ -8357,7 +8353,7 @@ func (a *stubStartSessionAgent) ListSessions(_ context.Context) ([]AgentSessionI
 }
 func (a *stubStartSessionAgent) Stop() error { return nil }
 
-func TestResumeFailureFallbackToFreshSession(t *testing.T) {
+func TestResumeFailureDoesNotCreateAnotherConversation(t *testing.T) {
 	agent := &stubStartSessionAgent{
 		failIDs: map[string]error{
 			"old-session-id": fmt.Errorf("Prompt is too long"),
@@ -8382,22 +8378,19 @@ func TestResumeFailureFallbackToFreshSession(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	state := e.getOrCreateInteractiveStateWith("test:user1", p, "ctx", session, e.sessions, nil, "")
 
-	if state.agentSession == nil {
-		t.Fatal("expected agentSession to be non-nil after fallback")
+	if state.agentSession != nil || state.startError == nil {
+		t.Fatal("expected an actionable resume error, not a new conversation")
 	}
 
 	agent.mu.Lock()
 	calls := append([]string{}, agent.calls...)
 	agent.mu.Unlock()
 
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 StartSession calls, got %d: %v", len(calls), calls)
+	if len(calls) != 1 || calls[0] != "old-session-id" {
+		t.Fatalf("StartSession calls = %v, want one explicit resume", calls)
 	}
-	if calls[0] != "old-session-id" {
-		t.Fatalf("first StartSession call = %q, want saved session id", calls[0])
-	}
-	if calls[1] != "" {
-		t.Fatalf("second StartSession call = %q, want empty string", calls[1])
+	if session.GetAgentSessionID() != "old-session-id" {
+		t.Fatal("failed resume changed the persisted UUID")
 	}
 }
 

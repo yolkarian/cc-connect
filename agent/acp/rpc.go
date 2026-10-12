@@ -8,9 +8,16 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/chenhg5/cc-connect/core"
 	"sync"
 	"sync/atomic"
 )
+
+var rpcCredentialValue = regexp.MustCompile(`(?i)(authorization\s*[:=]\s*(?:bearer|basic)\s+|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)\s*["']?\s*[:=]\s*["']?)[^\s"'},;&]+`)
 
 type rpcOutcome struct {
 	result json.RawMessage
@@ -18,15 +25,41 @@ type rpcOutcome struct {
 }
 
 type rpcErrPayload struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
 }
 
 func (e *rpcErrPayload) Error() string {
 	if e == nil {
 		return "json-rpc error"
 	}
-	return fmt.Sprintf("json-rpc %d: %s", e.Code, e.Message)
+	message := fmt.Sprintf("json-rpc %d: %s", e.Code, e.Message)
+	var data struct {
+		Details string `json:"details"`
+	}
+	if json.Unmarshal(e.Data, &data) == nil && data.Details != "" {
+		detail := data.Details
+		// Do not dump arbitrary RPC data (which may contain credentials). OMP
+		// supplies the actionable error as data.details; redact env credentials.
+		for _, entry := range os.Environ() {
+			name, value, _ := strings.Cut(entry, "=")
+			if strings.HasSuffix(name, "_KEY") || strings.HasSuffix(name, "_TOKEN") || strings.HasSuffix(name, "_SECRET") || strings.HasSuffix(name, "_PASSWORD") {
+				detail = core.RedactToken(detail, value)
+			}
+		}
+		if runes := []rune(detail); len(runes) > 1000 {
+			detail = string(runes[:1000]) + "…"
+		}
+		message += ": " + detail
+	}
+	for _, entry := range os.Environ() {
+		name, value, _ := strings.Cut(entry, "=")
+		if strings.HasSuffix(name, "_KEY") || strings.HasSuffix(name, "_TOKEN") || strings.HasSuffix(name, "_SECRET") || strings.HasSuffix(name, "_PASSWORD") {
+			message = core.RedactToken(message, value)
+		}
+	}
+	return rpcCredentialValue.ReplaceAllString(message, "${1}[REDACTED]")
 }
 
 type rpcNotifyHandler func(method string, params json.RawMessage)

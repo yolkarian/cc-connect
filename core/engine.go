@@ -519,6 +519,7 @@ type queuedMessage struct {
 // interactiveState tracks a running interactive agent session and its permission state.
 type interactiveState struct {
 	agentSession             AgentSession
+	startError               error
 	platform                 Platform
 	replyCtx                 any
 	currentMessageID         string
@@ -3744,7 +3745,11 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	defer stopRecallMonitor()
 
 	if state.agentSession == nil {
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFailedToStartAgentSession))
+		text := e.i18n.T(MsgFailedToStartAgentSession)
+		if state.startError != nil {
+			text += fmt.Sprintf("\n%v", state.startError)
+		}
+		e.reply(p, msg.ReplyCtx, text)
 		return
 	}
 	e.cancelAgentSessionIdleClose(state)
@@ -3886,6 +3891,9 @@ func (e *Engine) getOrCreateWorkspaceAgent(workspace string) (Agent, *SessionMan
 	if e.projectState != nil {
 		if m := e.projectState.WorkspaceModelOverride(workspace); m != "" {
 			opts["model"] = m
+		}
+		if effort := e.projectState.WorkspaceReasoningOverride(workspace); effort != "" {
+			opts["reasoning_effort"] = effort
 		}
 	}
 
@@ -4114,37 +4122,20 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	agentSession, err := agent.StartSession(e.ctx, startSessionID)
 	startElapsed := time.Since(startAt)
 	if err != nil {
-		// If resume/continue failed, try a fresh session as fallback.
-		if startSessionID != "" {
-			slog.Error("session resume failed, falling back to fresh session",
-				"session_key", sessionKey, "failed_session_id", startSessionID,
-				"error", err, "elapsed", startElapsed)
-			// Clear the stale session ID so CompareAndSetAgentSessionID can
-			// write the new ID, matching the relay fallback at line 12640.
-			session.SetAgentSessionID("", agent.Name())
-			sessions.Save()
-			startAt = time.Now()
-			agentSession, err = agent.StartSession(e.ctx, "")
-			startElapsed = time.Since(startAt)
-			if err == nil {
-				slog.Info("fresh session started after resume failure",
-					"session_key", sessionKey, "elapsed", startElapsed)
-			}
-		}
-		if err != nil {
-			slog.Error("failed to start interactive session", "error", err, "elapsed", startElapsed)
-			e.hooks.Emit(HookEvent{
-				Event:      HookEventError,
-				SessionKey: sessionKey,
-				Platform:   p.Name(),
-				Error:      fmt.Sprintf("failed to start session: %v", err),
-			})
-			newState := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true}
-			adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], newState)
-			state = newState
-			e.interactiveStates[sessionKey] = state
-			return state
-		}
+		// An explicit resume must fail visibly, never silently replace the
+		// conversation. The saved UUID and history remain available for retry.
+		slog.Error("failed to start interactive session", "error", err, "elapsed", startElapsed)
+		e.hooks.Emit(HookEvent{
+			Event:      HookEventError,
+			SessionKey: sessionKey,
+			Platform:   p.Name(),
+			Error:      fmt.Sprintf("failed to start session: %v", err),
+		})
+		newState := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true, startError: err}
+		adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], newState)
+		state = newState
+		e.interactiveStates[sessionKey] = state
+		return state
 	}
 	if startElapsed >= slowAgentStart {
 		slog.Warn("slow agent session start", "elapsed", startElapsed, "agent", agent.Name(), "session_id", startSessionID)
@@ -4761,6 +4752,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	waitStart := time.Now()
 	firstEventLogged := false
 	var toolSteps []ToolStep
+	var richThinking richThinkingAccumulator
 	var lastRichCardUpdate time.Time
 	var lastRichCardLen int
 	var cardMessageID any
@@ -4998,8 +4990,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		}
 
 		switch event.Type {
+		case EventText, EventToolUse, EventToolResult, EventPermissionRequest, EventResult, EventError:
+			richThinking.endBlock()
+		}
+		switch event.Type {
 		case EventThinking:
-			if isEllipsisOnly(event.Content) {
+			if !event.ThinkingDelta && isEllipsisOnly(event.Content) {
 				break
 			}
 			if hasRichCard {
@@ -5007,14 +5003,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if !e.display.ThinkingMessages {
 					break
 				}
-				if thinking := strings.TrimSpace(truncateIf(event.Content, e.display.ThinkingMaxLen)); thinking != "" {
-					toolSteps = append(toolSteps, ToolStep{
-						Kind:    ToolStepKindThinking,
-						Name:    "Thinking",
-						Summary: thinking,
-						Done:    true,
-					})
-				}
+				toolSteps = richThinking.append(toolSteps, event, e.display.ThinkingMaxLen)
 				if cardMessageID == nil {
 					card := buildResolvedRichCard(CardStatusThinking, "", toolSteps, partialText, true, e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir))
 					if starter, ok := p.(PreviewStarter); ok {
@@ -5958,6 +5947,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				// content. Same risk for partialText/toolSteps leaking across turns.
 				cardMessageID = nil
 				toolSteps = nil
+				richThinking.endBlock()
 				partialText = ""
 				lastRichCardUpdate = time.Time{}
 				lastRichCardLen = 0
@@ -9540,6 +9530,16 @@ func (e *Engine) cmdModel(p Platform, msg *Message, args []string) {
 		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
 		return
 	}
+	if usesSessionModelControls(agent) {
+		// Message.ChannelKey may identify a thread's parent workspace even
+		// when the session key alone cannot. Establish that exact context.
+		if _, err := e.sessionModelControllerWithContext(msg.SessionKey, p, msg.ReplyCtx, agent, sessions, interactiveKey); err != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgModelChangeFailed, err))
+			return
+		}
+		e.cmdNativeModel(p, msg, args)
+		return
+	}
 
 	switcher, ok := agent.(ModelSwitcher)
 	if !ok {
@@ -9750,9 +9750,17 @@ func (e *Engine) switchModelOnAgent(agent Agent, target string, persistConfig bo
 }
 
 func (e *Engine) cmdReasoning(p Platform, msg *Message, args []string) {
-	agent, sessions, _, err := e.commandContext(p, msg)
+	agent, sessions, interactiveKey, err := e.commandContext(p, msg)
 	if err != nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
+		return
+	}
+	if usesSessionModelControls(agent) {
+		if _, err := e.sessionModelControllerWithContext(msg.SessionKey, p, msg.ReplyCtx, agent, sessions, interactiveKey); err != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgReasoningChangeFailed, err))
+			return
+		}
+		e.cmdNativeReasoning(p, msg, args)
 		return
 	}
 
@@ -9803,7 +9811,7 @@ func (e *Engine) cmdReasoning(p Platform, msg *Message, args []string) {
 			e.replyWithButtons(p, msg.ReplyCtx, sb.String(), buttons)
 			return
 		}
-		e.replyWithCard(p, msg.ReplyCtx, e.renderReasoningCard())
+		e.replyWithCard(p, msg.ReplyCtx, e.renderReasoningCard(msg.SessionKey))
 		return
 	}
 
@@ -9828,9 +9836,8 @@ func (e *Engine) cmdReasoning(p Platform, msg *Message, args []string) {
 	switcher.SetReasoningEffort(target)
 	e.cleanupInteractiveState(e.interactiveKeyForSessionKey(msg.SessionKey))
 
-	s := sessions.GetOrCreateActive(msg.SessionKey)
-	s.SetAgentSessionID("", "")
-	s.ClearHistory()
+	// CLI-backed adapters apply the new effort when resuming on the next turn.
+	// Keep both native identity and bridge history, just as /model does.
 	sessions.Save()
 
 	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgReasoningChanged, target))
@@ -11906,6 +11913,15 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 	if prefix == "act" && cmd == "/model" {
 		return e.handleModelCardAction(args, sessionKey)
 	}
+	if prefix == "act" && cmd == "/reasoning" {
+		agent, _ := e.sessionContextForKey(sessionKey)
+		if usesSessionModelControls(agent) {
+			if _, err := e.switchNativeReasoning(sessionKey, args, nil, nil); err != nil {
+				return e.simpleCard(e.i18n.T(MsgCardTitleReasoning), "red", e.i18n.Tf(MsgReasoningChangeFailed, err))
+			}
+			return e.renderReasoningCard(sessionKey)
+		}
+	}
 
 	if prefix == "act" {
 		e.executeCardAction(cmd, args, sessionKey)
@@ -11915,9 +11931,13 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 	case "/help":
 		return e.renderHelpGroupCard(args)
 	case "/model":
+		agent, _ := e.sessionContextForKey(sessionKey)
+		if usesSessionModelControls(agent) {
+			return e.renderNativeModelCard(sessionKey, nativeModelPage(strings.Fields(args)))
+		}
 		return e.renderModelCard(sessionKey)
 	case "/reasoning":
-		return e.renderReasoningCard()
+		return e.renderReasoningCard(sessionKey)
 	case "/mode":
 		return e.renderModeCard()
 	case "/lang":
@@ -11991,6 +12011,14 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 
 func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
 	agent, sessions := e.sessionContextForKey(sessionKey)
+	if usesSessionModelControls(agent) {
+		target, ok := parseModelSwitchArgs(strings.Fields(args))
+		if !ok {
+			return e.renderNativeModelCard(sessionKey, nativeModelPage(strings.Fields(args)))
+		}
+		actual, err := e.switchNativeModel(sessionKey, target, nil, nil)
+		return e.renderModelSwitchResultCard(actual, err)
+	}
 	switcher, ok := agent.(ModelSwitcher)
 	if !ok {
 		return e.simpleCard(e.i18n.T(MsgCardTitleModel), "indigo", e.i18n.T(MsgModelNotSupported))
@@ -12100,7 +12128,8 @@ func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 		if args == "" {
 			return
 		}
-		switcher, ok := e.agent.(ReasoningEffortSwitcher)
+		agent, sessions := e.sessionContextForKey(sessionKey)
+		switcher, ok := agent.(ReasoningEffortSwitcher)
 		if !ok {
 			return
 		}
@@ -12113,10 +12142,7 @@ func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 			if effort == target {
 				switcher.SetReasoningEffort(target)
 				e.cleanupInteractiveState(interactiveKey)
-				s := e.sessions.GetOrCreateActive(sessionKey)
-				s.SetAgentSessionID("", "")
-				s.ClearHistory()
-				e.sessions.Save()
+				sessions.Save()
 				return
 			}
 		}
@@ -12846,6 +12872,10 @@ func (e *Engine) renderLangCard() *Card {
 }
 
 func (e *Engine) renderModelCard(sessionKey string) *Card {
+	agentForControls, _ := e.sessionContextForKey(sessionKey)
+	if usesSessionModelControls(agentForControls) {
+		return e.renderNativeModelCard(sessionKey, 0)
+	}
 	if ms := e.getModelSwitchState(sessionKey); ms != nil && ms.phase == "switching" {
 		return e.renderModelSwitchingCard(ms.target)
 	}
@@ -12918,8 +12948,12 @@ func (e *Engine) renderModelSwitchResultCard(target string, err error) *Card {
 		Build()
 }
 
-func (e *Engine) renderReasoningCard() *Card {
-	switcher, ok := e.agent.(ReasoningEffortSwitcher)
+func (e *Engine) renderReasoningCard(sessionKey string) *Card {
+	agent, _ := e.sessionContextForKey(sessionKey)
+	if usesSessionModelControls(agent) {
+		return e.renderNativeReasoningCard(sessionKey)
+	}
+	switcher, ok := agent.(ReasoningEffortSwitcher)
 	if !ok {
 		return e.simpleCard(e.i18n.T(MsgCardTitleReasoning), "orange", e.i18n.T(MsgReasoningNotSupported))
 	}
@@ -15741,18 +15775,7 @@ func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey,
 	// timeout only controls how long we *wait* for the response.
 	agentSession, err := agent.StartSession(e.ctx, session.GetAgentSessionID())
 	if err != nil {
-		// Resume failed — fall back to a fresh session so the relay is not
-		// permanently broken by a corrupted/stale session ID.
-		if session.GetAgentSessionID() != "" {
-			slog.Warn("relay: session resume failed, trying fresh session",
-				"relay_key", relaySessionKey, "error", err)
-			session.SetAgentSessionID("", agent.Name())
-			sessions.Save()
-			agentSession, err = agent.StartSession(e.ctx, "")
-		}
-		if err != nil {
-			return "", fmt.Errorf("start relay session: %w", err)
-		}
+		return "", fmt.Errorf("start relay session: %w", err)
 	}
 
 	saveRelaySessionID := func(id string, force bool) {

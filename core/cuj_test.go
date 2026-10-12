@@ -1745,6 +1745,33 @@ func TestCUJ_F2_ModelSwitchLinkedToAgent(t *testing.T) {
 	t.Log("CUJ-F2: model switching is per-agent; covered by agent/*_test.go model tests")
 }
 
+// CUJ-F5 · Native model/effort controls preserve the visible conversation.
+func TestCUJ_F5_NativeModelAndReasoningPreserveHistory(t *testing.T) {
+	env := newCUJEnv(t)
+	live := newNativeControlTestSession("original-uuid")
+	env.engine.agent = &nativeControlTestAgent{session: live}
+	key := "test:models"
+	saved := env.engine.sessions.GetOrCreateActive(key)
+	saved.SetAgentSessionID("original-uuid", "native-test")
+	saved.AddHistory("user", "history before the model switch")
+	t.Cleanup(func() { env.engine.cleanupInteractiveState(key) })
+
+	env.userSends("models", "/model")
+	if got := strings.Join(env.plat.getSent(), "\n"); !strings.Contains(got, "provider/model-a") || !strings.Contains(got, "provider/model-b") {
+		t.Fatalf("native choices were not visible: %s", got)
+	}
+	env.plat.clearSent()
+	env.userSends("models", "/model switch provider/model-b")
+	env.userSends("models", "/reasoning max")
+	env.userSends("models", "/history")
+	got := strings.Join(env.plat.getSent(), "\n")
+	for _, text := range []string{"Model switched to `provider/model-b`", "Reasoning effort switched to `max`", "history before the model switch"} {
+		if !strings.Contains(got, text) {
+			t.Fatalf("user did not see %q: %s", text, got)
+		}
+	}
+}
+
 // CUJ-F3 · /lang switches i18n locale; next reply uses new language.
 func TestCUJ_F3_LangSwitchChangesReplyLanguage(t *testing.T) {
 	env := newCUJEnv(t)

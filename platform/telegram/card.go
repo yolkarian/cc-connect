@@ -21,9 +21,10 @@ import (
 // panels, streaming markdown body, and a dim status footer.
 
 const (
-	// cardPanelStepCap is the max step rows rendered per panel; older rows
-	// collapse into a "省略" placeholder like the Feishu panels.
-	cardPanelStepCap = 10
+	// cardPanelStepCap caps tool rows; reasoning is a continuous text panel,
+	// not a list of wire fragments or commands.
+	cardPanelStepCap   = 10
+	cardReasoningRunes = 1100
 	// cardStepRunes caps one step row so wide tool inputs stay scannable.
 	cardStepRunes = 110
 	// cardResultRunes caps the optional tool-result echo line.
@@ -51,13 +52,13 @@ func (p *Platform) BuildRichCard(status core.CardStatus, title string, steps []c
 
 	reasoning, tools := cardSplitSteps(steps)
 
-	cardWritePanel(&b, "💭 推理", reasoning)
+	cardWriteReasoningPanel(&b, reasoning)
 	if len(reasoning) == 0 && len(tools) == 0 && streaming {
 		// Mirror the Feishu streaming placeholder so the card never starts
 		// as an empty frame.
 		b.WriteString("\n> [!fold] 💭 推理\n> ⋯\n")
 	}
-	cardWritePanel(&b, "🔧 工具", tools)
+	cardWriteToolPanel(&b, tools)
 
 	if body := strings.TrimSpace(markdown); body != "" {
 		b.WriteString("\n")
@@ -113,15 +114,37 @@ func cardSplitSteps(steps []core.ToolStep) (reasoning []core.ToolStep, tools []c
 	return reasoning, tools
 }
 
-// cardWritePanel renders one collapsible lane as a Telegram expandable
-// blockquote (fold callout): total count in the title, an "已省略"
-// placeholder for steps beyond the cap, then the newest rows.
-func cardWritePanel(b *strings.Builder, label string, steps []core.ToolStep) {
+// Reasoning retains paragraphs/newlines and has one icon in its heading, not
+// a repeated thinking emoji before every line or streamed word fragment.
+func cardWriteReasoningPanel(b *strings.Builder, steps []core.ToolStep) {
+	var blocks []string
+	for _, step := range steps {
+		if text := strings.TrimSpace(step.Summary); text != "" {
+			blocks = append(blocks, text)
+		}
+	}
+	if len(blocks) == 0 {
+		return
+	}
+	text := strings.Join(blocks, "\n\n")
+	if runes := []rune(text); len(runes) > cardReasoningRunes {
+		text = string(runes[:cardReasoningRunes]) + "…"
+	}
+	fmt.Fprintf(b, "\n> [!fold] 💭 推理 (%d)\n", len(blocks))
+	for _, line := range strings.Split(text, "\n") {
+		b.WriteString("> ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+}
+
+// Tool calls remain individually counted/status-marked in a separate fold.
+func cardWriteToolPanel(b *strings.Builder, steps []core.ToolStep) {
 	if len(steps) == 0 {
 		return
 	}
 	b.WriteString("\n> [!fold] ")
-	b.WriteString(label)
+	b.WriteString("🔧 工具")
 	b.WriteString(fmt.Sprintf(" (%d)\n", len(steps)))
 	hidden := len(steps) - cardPanelStepCap
 	if hidden > 0 {
@@ -129,20 +152,11 @@ func cardWritePanel(b *strings.Builder, label string, steps []core.ToolStep) {
 		steps = steps[len(steps)-cardPanelStepCap:]
 	}
 	for _, step := range steps {
-		cardWriteStep(b, step)
+		cardWriteToolStep(b, step)
 	}
 }
 
-// cardWriteStep renders one row. Thinking rows get a neutral glyph; tool rows
-// get name, trimmed detail, and a status mark.
-func cardWriteStep(b *strings.Builder, step core.ToolStep) {
-	if step.Kind == core.ToolStepKindThinking {
-		b.WriteString("> 🤔 ")
-		b.WriteString(cardInline(step.Summary, cardStepRunes))
-		b.WriteString("\n")
-		return
-	}
-
+func cardWriteToolStep(b *strings.Builder, step core.ToolStep) {
 	b.WriteString("> 🔧 **")
 	b.WriteString(cardInline(cardToolName(step.Name, step.Summary), 40))
 	b.WriteString("**")

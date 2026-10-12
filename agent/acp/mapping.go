@@ -68,9 +68,10 @@ func mapTextChunk(sessionID string, update json.RawMessage, eventType core.Event
 	}
 	if err := json.Unmarshal(update, &u); err == nil && u.Content.Text != "" {
 		return []core.Event{{
-			Type:      eventType,
-			Content:   u.Content.Text,
-			SessionID: sessionID,
+			Type:          eventType,
+			Content:       u.Content.Text,
+			ThinkingDelta: eventType == core.EventThinking,
+			SessionID:     sessionID,
 		}}
 	}
 
@@ -82,9 +83,10 @@ func mapTextChunk(sessionID string, update json.RawMessage, eventType core.Event
 	}
 	if err := json.Unmarshal(update, &alt1); err == nil && alt1.Content.Text != "" {
 		return []core.Event{{
-			Type:      eventType,
-			Content:   alt1.Content.Text,
-			SessionID: sessionID,
+			Type:          eventType,
+			Content:       alt1.Content.Text,
+			ThinkingDelta: eventType == core.EventThinking,
+			SessionID:     sessionID,
 		}}
 	}
 
@@ -94,9 +96,10 @@ func mapTextChunk(sessionID string, update json.RawMessage, eventType core.Event
 	}
 	if err := json.Unmarshal(update, &alt2); err == nil && alt2.Text != "" {
 		return []core.Event{{
-			Type:      eventType,
-			Content:   alt2.Text,
-			SessionID: sessionID,
+			Type:          eventType,
+			Content:       alt2.Text,
+			ThinkingDelta: eventType == core.EventThinking,
+			SessionID:     sessionID,
 		}}
 	}
 
@@ -106,9 +109,10 @@ func mapTextChunk(sessionID string, update json.RawMessage, eventType core.Event
 	}
 	if err := json.Unmarshal(update, &alt3); err == nil && alt3.Content != "" {
 		return []core.Event{{
-			Type:      eventType,
-			Content:   alt3.Content,
-			SessionID: sessionID,
+			Type:          eventType,
+			Content:       alt3.Content,
+			ThinkingDelta: eventType == core.EventThinking,
+			SessionID:     sessionID,
 		}}
 	}
 

@@ -110,8 +110,9 @@ type Platform struct {
 	groupReplyAll         bool
 	shareSessionInChannel bool
 	enableReactions       bool
-	progressStyle         string // "legacy" | "compact" — telegram has no rich card, so "card" is mapped to "compact"
+	progressStyle         string // "legacy" | "compact"; rich card mode is expressed through display/card_mode = "rich"
 	httpClient            *http.Client
+	edits                 *telegramEditThrottler
 
 	mu                  sync.RWMutex
 	bot                 telegramBot
@@ -190,6 +191,7 @@ func New(opts map[string]any) (core.Platform, error) {
 		enableReactions:       enableReactions,
 		progressStyle:         progressStyle,
 		httpClient:            httpClient,
+		edits:                 newTelegramEditThrottler(cardEditMinInterval),
 	}, nil
 }
 
@@ -1335,6 +1337,7 @@ func (p *Platform) DeletePreviewMessage(ctx context.Context, previewHandle any) 
 	if err != nil {
 		return err
 	}
+	p.edits.drop(h) // the target message is gone; drop queued frames
 	_, err = bot.DeleteMessage(ctx, &tgbot.DeleteMessageParams{ChatID: h.chatID, MessageID: h.messageID})
 	if err != nil {
 		slog.Debug("telegram: delete preview message failed", "error", err)
@@ -1465,15 +1468,14 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 	return &telegramPreviewHandle{chatID: rc.chatID, threadID: rc.threadID, messageID: sent.ID}, nil
 }
 
-// UpdateMessage edits an existing message identified by previewHandle.
+// UpdateMessage edits an existing message identified by previewHandle. Edits
+// are funneled through the per-message throttler so engine-driven card updates
+// (thinking/tool events are not throttled upstream) respect Telegram's
+// editMessageText pacing and always converge to the newest frame.
 func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content string) error {
 	h, ok := previewHandle.(*telegramPreviewHandle)
 	if !ok {
 		return fmt.Errorf("telegram: invalid preview handle type %T", previewHandle)
-	}
-	bot, err := p.connectedBot("update message")
-	if err != nil {
-		return err
 	}
 
 	html := core.MarkdownToSimpleHTML(content)
@@ -1482,40 +1484,7 @@ func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content
 		"content_prefix", truncateForLog(content, 80),
 		"html_prefix", truncateForLog(html, 80))
 
-	params := &tgbot.EditMessageTextParams{
-		ChatID:    h.chatID,
-		MessageID: h.messageID,
-		Text:      html,
-		ParseMode: models.ParseModeHTML,
-	}
-
-	if _, err := bot.EditMessageText(ctx, params); err != nil {
-		errMsg := err.Error()
-		slog.Debug("telegram: UpdateMessage HTML failed", "error", errMsg)
-		if strings.Contains(errMsg, "not modified") {
-			return nil
-		}
-		if strings.Contains(errMsg, "can't parse") {
-			slog.Warn("telegram: HTML rejected by Telegram, editing as plain text",
-				"method", "UpdateMessage",
-				"error", errMsg,
-				"html_prefix", truncateForLog(html, 200),
-				"html_len", len(html),
-			)
-			params.Text = content
-			params.ParseMode = ""
-			if _, err2 := bot.EditMessageText(ctx, params); err2 != nil {
-				if strings.Contains(err2.Error(), "not modified") {
-					return nil
-				}
-				return fmt.Errorf("telegram: edit message: %w", err2)
-			}
-			return nil
-		}
-		return fmt.Errorf("telegram: edit message: %w", err)
-	}
-	slog.Debug("telegram: UpdateMessage HTML success")
-	return nil
+	return p.edits.edit(ctx, h, html, content, p.performEdit)
 }
 
 // telegramMaxMessageLen is the maximum message length for Telegram.

@@ -24,27 +24,36 @@ func MarkdownToSimpleHTML(md string) string {
 	var tblLines []string
 
 	// flushBlockquote merges buffered blockquote lines into a single <blockquote>.
-	// Supports Obsidian-style callouts: > [!type] Title
+	// Supports Obsidian-style callouts: > [!type] Title. The "fold" type renders
+	// Telegram's expandable (foldable) blockquote with just the title bolded:
+	// > [!fold] 💭 Reasoning — used by the rich-card panels.
 	flushBlockquote := func() {
 		if len(bqLines) == 0 {
 			return
 		}
-		b.WriteString("<blockquote>")
+		openTag := "<blockquote>"
+		titleHTML := ""
 		startIdx := 0
-		// Check for callout syntax in the first line
-		if len(bqLines) > 0 {
-			if m := reCallout.FindStringSubmatch(bqLines[0]); m != nil {
-				calloutType := m[1]
-				calloutTitle := m[2]
+		if m := reCallout.FindStringSubmatch(bqLines[0]); m != nil {
+			calloutType := m[1]
+			calloutTitle := m[2]
+			startIdx = 1
+			if strings.EqualFold(calloutType, "fold") {
+				openTag = "<blockquote expandable>"
 				if calloutTitle != "" {
-					b.WriteString("<b>" + escapeHTML(calloutType) + ": " + escapeHTML(calloutTitle) + "</b>")
-				} else {
-					b.WriteString("<b>" + escapeHTML(calloutType) + "</b>")
+					titleHTML = "<b>" + escapeHTML(calloutTitle) + "</b>"
 				}
-				startIdx = 1
-				if startIdx < len(bqLines) {
-					b.WriteByte('\n')
-				}
+			} else if calloutTitle != "" {
+				titleHTML = "<b>" + escapeHTML(calloutType) + ": " + escapeHTML(calloutTitle) + "</b>"
+			} else {
+				titleHTML = "<b>" + escapeHTML(calloutType) + "</b>"
+			}
+		}
+		b.WriteString(openTag)
+		if titleHTML != "" {
+			b.WriteString(titleHTML)
+			if startIdx < len(bqLines) {
+				b.WriteByte('\n')
 			}
 		}
 		for j := startIdx; j < len(bqLines); j++ {

@@ -185,24 +185,12 @@ func (a *Agent) Name() string { return "acp" }
 
 func (a *Agent) SupportsSessionModelControl() bool { return true }
 
-// Preferences are applied after a successful native new/load handshake. The
-// engine changes them only after a live session acknowledges a selection.
-func (a *Agent) SetModel(model string) {
-	a.mu.Lock()
-	a.model = model
-	a.mu.Unlock()
-}
-
+// These getters expose configured new-session defaults, not live selections.
+// Actual model/effort state belongs exclusively to each native acpSession.
 func (a *Agent) GetModel() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.model
-}
-
-func (a *Agent) SetReasoningEffort(effort string) {
-	a.mu.Lock()
-	a.reasoningEffort = effort
-	a.mu.Unlock()
 }
 
 func (a *Agent) GetReasoningEffort() string {

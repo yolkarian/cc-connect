@@ -9,10 +9,12 @@ import (
 )
 
 type projectStateData struct {
-	WorkDirOverride             string            `json:"work_dir_override,omitempty"`
-	WorkspaceDirOverrides       map[string]string `json:"workspace_dir_overrides,omitempty"`
-	WorkspaceModelOverrides     map[string]string `json:"workspace_model_overrides,omitempty"`
-	WorkspaceReasoningOverrides map[string]string `json:"workspace_reasoning_overrides,omitempty"`
+	WorkDirOverride         string            `json:"work_dir_override,omitempty"`
+	WorkspaceDirOverrides   map[string]string `json:"workspace_dir_overrides,omitempty"`
+	WorkspaceModelOverrides map[string]string `json:"workspace_model_overrides,omitempty"`
+	// Read only to block startup until an explicit offline migration. Never
+	// apply these values to a native session or write new reasoning overrides.
+	LegacyReasoningOverrides map[string]string `json:"workspace_reasoning_overrides,omitempty"`
 }
 
 // ProjectStateStore persists lightweight runtime state for one project.
@@ -20,6 +22,7 @@ type ProjectStateStore struct {
 	mu        sync.RWMutex
 	storePath string
 	state     projectStateData
+	loadErr   error // native ownership migration must fail closed on unreadable state
 }
 
 func NewProjectStateStore(path string) *ProjectStateStore {
@@ -94,23 +97,20 @@ func (ps *ProjectStateStore) SetWorkspaceModelOverride(workspace, model string) 
 	ps.state.WorkspaceModelOverrides[workspace] = model
 }
 
-func (ps *ProjectStateStore) WorkspaceReasoningOverride(workspace string) string {
+func (ps *ProjectStateStore) HasLegacyNativeModelOverrides() bool {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
-	return ps.state.WorkspaceReasoningOverrides[workspace]
-}
-
-func (ps *ProjectStateStore) SetWorkspaceReasoningOverride(workspace, effort string) {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-	if effort == "" {
-		delete(ps.state.WorkspaceReasoningOverrides, workspace)
-		return
+	if ps.loadErr != nil {
+		return true
 	}
-	if ps.state.WorkspaceReasoningOverrides == nil {
-		ps.state.WorkspaceReasoningOverrides = make(map[string]string)
+	for _, values := range []map[string]string{ps.state.WorkspaceModelOverrides, ps.state.LegacyReasoningOverrides} {
+		for _, value := range values {
+			if value != "" {
+				return true
+			}
+		}
 	}
-	ps.state.WorkspaceReasoningOverrides[workspace] = effort
+	return false
 }
 
 func (ps *ProjectStateStore) ClearWorkspaceModelOverride(workspace string) {
@@ -158,6 +158,7 @@ func (ps *ProjectStateStore) load() {
 	data, err := os.ReadFile(ps.storePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
+			ps.loadErr = err
 			slog.Error("project_state: failed to read", "path", ps.storePath, "error", err)
 		}
 		return
@@ -165,6 +166,7 @@ func (ps *ProjectStateStore) load() {
 
 	var state projectStateData
 	if err := json.Unmarshal(data, &state); err != nil {
+		ps.loadErr = err
 		slog.Error("project_state: failed to unmarshal", "path", ps.storePath, "error", err)
 		return
 	}

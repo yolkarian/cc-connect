@@ -169,7 +169,7 @@ func TestNativeModelControl_ResumeFailureNeverCreatesAnotherConversation(t *test
 	}
 }
 
-func TestNativeModelControl_MultiWorkspacePersistsIndependentPreferences(t *testing.T) {
+func TestNativeModelControl_MultiWorkspaceSelectionsBelongToNativeSessions(t *testing.T) {
 	p := &stubPlatformEngine{n: "telegram"}
 	global := &nativeControlTestAgent{}
 	e := NewEngine("test", global, []Platform{p}, "", LangEnglish)
@@ -202,11 +202,58 @@ func TestNativeModelControl_MultiWorkspacePersistsIndependentPreferences(t *test
 		if saved.GetAgentSessionID() != live.CurrentSessionID() || len(saved.GetHistory(0)) != 1 {
 			t.Fatal("workspace history was reset")
 		}
+		if agent.model != "" || agent.effort != "" {
+			t.Fatal("live selections became new-conversation defaults")
+		}
+		actual := live.ModelControls()
+		if actual.CurrentModel != model || actual.CurrentReasoningEffort != effort {
+			t.Fatal("workspace native selections were mixed")
+		}
 		defer e.cleanupInteractiveState(dir + ":" + key)
 	}
 	loaded := NewProjectStateStore(store)
-	if loaded.WorkspaceModelOverride(dirs[0]) != "provider/model-b" || loaded.WorkspaceModelOverride(dirs[1]) != "provider/model-a" || loaded.WorkspaceReasoningOverride(dirs[0]) != "max" || loaded.WorkspaceReasoningOverride(dirs[1]) != "off" {
-		t.Fatal("workspace selections were mixed or not persisted")
+	if loaded.HasLegacyNativeModelOverrides() {
+		t.Fatal("native selections created a second persistence owner")
+	}
+}
+
+func TestNativeModelControl_RequiresExplicitMigrationBeforePlatformStart(t *testing.T) {
+	for _, field := range []string{"workspace_model_overrides", "workspace_reasoning_overrides", "malformed"} {
+		t.Run(field, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "project.state.json")
+			original := fmt.Sprintf(`{"%s":{"/workspace":"old-preference"}}`, field)
+			if field == "malformed" {
+				original = "{"
+			}
+			if err := os.WriteFile(file, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			live := newNativeControlTestSession("saved-uuid")
+			agent := &nativeControlTestAgent{session: live}
+			e := NewEngine("test", agent, nil, "", LangEnglish)
+			e.projectState = NewProjectStateStore(file)
+			if err := e.Start(); err == nil || !strings.Contains(err.Error(), "offline migration") {
+				t.Fatalf("migration gate=%v", err)
+			}
+			if _, err := e.sessionModelController("telegram:c:u", nil, nil); err == nil {
+				t.Fatal("native command bypassed migration gate")
+			}
+			if _, err := e.HandleRelay(context.Background(), "other", "telegram:c:u", "test"); err == nil {
+				t.Fatal("relay bypassed migration gate")
+			}
+			saved := e.sessions.GetOrCreateActive("telegram:c:u")
+			saved.SetAgentSessionID("saved-uuid", agent.Name())
+			state := e.getOrCreateInteractiveStateWith("telegram:c:u", nil, nil, saved, e.sessions, nil, "")
+			if state.startError == nil {
+				t.Fatal("ordinary session start bypassed migration gate")
+			}
+			if len(agent.calls) != 0 {
+				t.Fatal("a conflicting saved session was opened")
+			}
+			if data, _ := os.ReadFile(file); string(data) != original {
+				t.Fatal("runtime silently migrated preferences")
+			}
+		})
 	}
 }
 

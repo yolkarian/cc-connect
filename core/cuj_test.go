@@ -1770,6 +1770,28 @@ func TestCUJ_F5_NativeModelAndReasoningPreserveHistory(t *testing.T) {
 			t.Fatalf("user did not see %q: %s", text, got)
 		}
 	}
+
+	// Close the bridge frontend before another frontend changes the SAME saved
+	// native conversation. On reconnect the menu must read native state, not
+	// remember the bridge selection as an overriding workspace preference.
+	env.engine.cleanupInteractiveState(key)
+	agent := env.engine.agent.(*nativeControlTestAgent)
+	resumed := newNativeControlTestSession("original-uuid")
+	resumed.controls.CurrentReasoningEffort = "off"
+	agent.session = resumed
+	env.plat.clearSent()
+	env.userSends("models", "/model")
+	env.userSends("models", "/reasoning")
+	env.userSends("models", "/history")
+	got = strings.Join(env.plat.getSent(), "\n")
+	for _, text := range []string{env.engine.i18n.Tf(MsgModelCurrent, "provider/model-a"), env.engine.i18n.Tf(MsgReasoningCurrent, "off"), "history before the model switch"} {
+		if !strings.Contains(got, text) {
+			t.Fatalf("native frontend update was not visible: missing %q in %s", text, got)
+		}
+	}
+	if saved.GetAgentSessionID() != "original-uuid" || agent.model != "" || agent.effort != "" {
+		t.Fatal("bridge preferences overrode native state")
+	}
 }
 
 // CUJ-F3 · /lang switches i18n locale; next reply uses new language.

@@ -295,19 +295,20 @@ const (
 	MsgCronBtnUnmute          MsgKey = "cron_btn_unmute"
 	MsgCronBtnDelete          MsgKey = "cron_btn_delete"
 
-	MsgStatusTitle           MsgKey = "status_title"
-	MsgReplyFooterRemaining  MsgKey = "reply_footer_remaining"
-	MsgModelCurrent          MsgKey = "model_current"
-	MsgModelChanged          MsgKey = "model_changed"
-	MsgModelChangeFailed     MsgKey = "model_change_failed"
-	MsgModelCardSwitching    MsgKey = "model_card_switching"
-	MsgModelCardSwitched     MsgKey = "model_card_switched"
-	MsgModelCardSwitchFailed MsgKey = "model_card_switch_failed"
-	MsgModelNotSupported     MsgKey = "model_not_supported"
-	MsgReasoningCurrent      MsgKey = "reasoning_current"
-	MsgReasoningChanged      MsgKey = "reasoning_changed"
-	MsgReasoningChangeFailed MsgKey = "reasoning_change_failed"
-	MsgReasoningNotSupported MsgKey = "reasoning_not_supported"
+	MsgStatusTitle                MsgKey = "status_title"
+	MsgReplyFooterRemaining       MsgKey = "reply_footer_remaining"
+	MsgModelCurrent               MsgKey = "model_current"
+	MsgModelChanged               MsgKey = "model_changed"
+	MsgModelChangeFailed          MsgKey = "model_change_failed"
+	MsgModelCardSwitching         MsgKey = "model_card_switching"
+	MsgModelCardSwitched          MsgKey = "model_card_switched"
+	MsgModelCardSwitchFailed      MsgKey = "model_card_switch_failed"
+	MsgModelNotSupported          MsgKey = "model_not_supported"
+	MsgReasoningCurrent           MsgKey = "reasoning_current"
+	MsgReasoningChanged           MsgKey = "reasoning_changed"
+	MsgReasoningChangeFailed      MsgKey = "reasoning_change_failed"
+	MsgReasoningNotSupported      MsgKey = "reasoning_not_supported"
+	MsgNativeModelMigrationNeeded MsgKey = "native_model_migration_needed"
 
 	MsgCompressNotSupported MsgKey = "compress_not_supported"
 	MsgCompressing          MsgKey = "compressing"
@@ -2264,6 +2265,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "❌ 切換推理強度失敗: %v",
 		LangJapanese:           "❌ 推論強度の切り替えに失敗しました: %v",
 		LangSpanish:            "❌ Error al cambiar el esfuerzo de razonamiento: %v",
+	},
+	MsgNativeModelMigrationNeeded: {
+		LangEnglish:            "Native model state requires an offline migration of legacy overrides in `%s`. Back up and compare with saved backend selections, explicitly resolve differences, then remove the reviewed overrides before restarting.",
+		LangChinese:            "原生模型状态需要先离线迁移 `%s` 中的旧覆盖项。请备份并与后端保存的选择比较，明确确认差异，再清除已审核的覆盖项并重启。",
+		LangTraditionalChinese: "原生模型狀態需要先離線遷移 `%s` 中的舊覆蓋項。請備份並與後端儲存的選擇比較，明確確認差異，再清除已審核的覆蓋項並重啟。",
+		LangJapanese:           "ネイティブモデル状態を使用する前に `%s` の旧オーバーライドをオフライン移行してください。バックアップし、保存済みの選択と比較し、差異を確認してから旧設定を削除して再起動してください。",
+		LangSpanish:            "El estado nativo requiere migrar sin conexión las preferencias antiguas de `%s`. Haga una copia, compare las selecciones guardadas, confirme las diferencias y elimine las preferencias revisadas antes de reiniciar.",
 	},
 	MsgReasoningNotSupported: {
 		LangEnglish:            "This agent does not support reasoning effort switching.",

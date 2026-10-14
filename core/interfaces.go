@@ -476,8 +476,10 @@ type MemoryFileProvider interface {
 }
 
 // SessionModelControlProvider opts an agent into native, session-scoped model
-// controls. The engine starts/resumes the active conversation to discover them;
-// it never substitutes another conversation when that resume fails.
+// controls with backend-owned selections. The engine starts/resumes the active
+// conversation to discover them; it neither persists/replays model preferences
+// nor substitutes another conversation when that resume fails. Backends that
+// support resume must restore their own saved selection.
 type SessionModelControlProvider interface {
 	SupportsSessionModelControl() bool
 }

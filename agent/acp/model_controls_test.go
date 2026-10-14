@@ -65,7 +65,7 @@ func TestACPModelControls_PreserveIdentityAndRefreshEfforts(t *testing.T) {
 	}
 }
 
-func TestACPModelControls_ConstructorAppliesWorkspacePreferences(t *testing.T) {
+func TestACPModelControls_ResumeKeepsNativeSelectionDespiteConfiguredDefaults(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,27 @@ func TestACPModelControls_ConstructorAppliesWorkspacePreferences(t *testing.T) {
 	}
 	defer s.Close()
 	controls := s.ModelControls()
-	if controls.CurrentModel != "provider/model-b" || controls.CurrentReasoningEffort != "max" || s.CurrentSessionID() != "saved-model-session" {
-		t.Fatalf("workspace preferences not restored in place: %+v", controls)
+	if controls.CurrentModel != "provider/model-a" || controls.CurrentReasoningEffort != "xhigh" || s.CurrentSessionID() != "saved-model-session" {
+		t.Fatalf("resume overwrote native selections: %+v", controls)
+	}
+}
+
+func TestACPModelControls_NewConversationUsesExplicitInitialSelection(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := newACPSession(context.Background(), acpSessionConfig{
+		command: executable, args: []string{"-test.run=^TestACPModelControlProtocolFixture$"},
+		extraEnv: []string{"CC_ACP_MODEL_FIXTURE=ok"}, workDir: t.TempDir(),
+		initialModel: "provider/model-b", initialReasoning: "max",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if actual := s.ModelControls(); actual.CurrentModel != "provider/model-b" || actual.CurrentReasoningEffort != "max" {
+		t.Fatalf("explicit new-session initialization failed: %+v", actual)
 	}
 }
 

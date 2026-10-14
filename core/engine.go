@@ -2290,6 +2290,11 @@ func (e *Engine) ExecuteHeartbeat(sessionKey, prompt string, silent bool) error 
 }
 
 func (e *Engine) Start() error {
+	// Do not silently discard or replay an old preference when the backend
+	// becomes the selection owner. Migration must be explicitly reviewed first.
+	if err := e.nativeModelMigrationError(); err != nil {
+		return err
+	}
 	var startErrs []error
 	readyCount := 0
 	pendingCount := 0
@@ -3888,12 +3893,14 @@ func (e *Engine) getOrCreateWorkspaceAgent(workspace string) (Agent, *SessionMan
 	// workspace-specific overrides always win
 	opts["work_dir"] = workspace
 
-	if e.projectState != nil {
+	if err := e.nativeModelMigrationError(); err != nil {
+		return nil, nil, err
+	}
+	// CLI adapters still need bridge-managed defaults. Native session controls
+	// own their selections; their live values must never become clone defaults.
+	if e.projectState != nil && !usesSessionModelControls(e.agent) {
 		if m := e.projectState.WorkspaceModelOverride(workspace); m != "" {
 			opts["model"] = m
-		}
-		if effort := e.projectState.WorkspaceReasoningOverride(workspace); effort != "" {
-			opts["reasoning_effort"] = effort
 		}
 	}
 
@@ -4042,6 +4049,13 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	agent := e.agent
 	if agentOverride != nil {
 		agent = agentOverride
+	}
+
+	if err := e.nativeModelMigrationError(); err != nil {
+		state := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true, startError: err}
+		adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], state)
+		e.interactiveStates[sessionKey] = state
+		return state
 	}
 
 	ccKey := sessionKey
@@ -12050,7 +12064,7 @@ func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
 }
 
 func (e *Engine) persistWorkspaceModelOverride(interactiveKey, sessionKey string, agent Agent, model string) {
-	if e.projectState == nil || !e.multiWorkspace || model == "" {
+	if e.projectState == nil || !e.multiWorkspace || model == "" || usesSessionModelControls(agent) {
 		return
 	}
 	if agent == e.agent {
@@ -15750,6 +15764,9 @@ func (e *Engine) relayContextForSourceSessionKey(fromProject, sourceSessionKey s
 // dedicated relay session, sends the message to the agent, and blocks until
 // the complete response is collected (or the relay context times out).
 func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey, message string) (string, error) {
+	if err := e.nativeModelMigrationError(); err != nil {
+		return "", err
+	}
 	agent, sessions, relaySessionKey, err := e.relayContextForSourceSessionKey(fromProject, sourceSessionKey)
 	if err != nil {
 		return "", err

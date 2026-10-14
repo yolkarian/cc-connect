@@ -22,6 +22,9 @@ func (e *Engine) sessionModelController(sessionKey string, p Platform, replyCtx 
 }
 
 func (e *Engine) sessionModelControllerWithContext(sessionKey string, p Platform, replyCtx any, agent Agent, sessions *SessionManager, key string) (SessionModelController, error) {
+	if err := e.nativeModelMigrationError(); err != nil {
+		return nil, err
+	}
 	if p == nil {
 		p = e.platformForName(extractPlatformName(sessionKey))
 	}
@@ -75,15 +78,8 @@ func (e *Engine) switchNativeModel(sessionKey, target string, p Platform, replyC
 	if actual.CurrentModel != target {
 		return target, fmt.Errorf("backend did not confirm model %q", target)
 	}
-	agent, sessions := e.sessionContextForKey(sessionKey)
-	if preferences, ok := agent.(interface{ SetModel(string) }); ok {
-		preferences.SetModel(actual.CurrentModel)
-	}
-	// A model switch can clamp the effort. Persist the backend's actual value,
-	// not the effort supported by the previous model.
-	e.persistNativeReasoningPreference(sessionKey, agent, actual.CurrentReasoningEffort)
-	e.persistWorkspaceModelOverride(e.interactiveKeyForSessionKey(sessionKey), sessionKey, agent, target)
-	sessions.Save()
+	// The backend owns both selection and persistence, including any effort
+	// clamp. Never copy its live selection into constructor/workspace defaults.
 	return target, nil
 }
 
@@ -106,24 +102,14 @@ func (e *Engine) switchNativeReasoning(sessionKey, input string, p Platform, rep
 	if actual != target {
 		return target, fmt.Errorf("backend did not confirm reasoning effort %q", target)
 	}
-	agent, sessions := e.sessionContextForKey(sessionKey)
-	e.persistNativeReasoningPreference(sessionKey, agent, actual)
-	sessions.Save()
 	return actual, nil
 }
 
-func (e *Engine) persistNativeReasoningPreference(sessionKey string, agent Agent, effort string) {
-	if preferences, ok := agent.(interface{ SetReasoningEffort(string) }); ok {
-		preferences.SetReasoningEffort(effort)
+func (e *Engine) nativeModelMigrationError() error {
+	if usesSessionModelControls(e.agent) && e.projectState != nil && e.projectState.HasLegacyNativeModelOverrides() {
+		return fmt.Errorf("%s", e.i18n.Tf(MsgNativeModelMigrationNeeded, e.projectState.storePath))
 	}
-	if e.projectState == nil || !e.multiWorkspace || agent == e.agent {
-		return
-	}
-	workspace := workspaceModelOverrideKey(e.interactiveKeyForSessionKey(sessionKey), sessionKey, agent)
-	if workspace != "" {
-		e.projectState.SetWorkspaceReasoningOverride(workspace, effort)
-		e.projectState.Save()
-	}
+	return nil
 }
 
 func nativeModelPage(args []string) int {

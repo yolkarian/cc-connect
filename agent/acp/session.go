@@ -159,6 +159,11 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		}
 	}
 
+	// Constructor options are explicit defaults for a new conversation only.
+	// A successful load owns its saved model/effort; never reset it on resume.
+	if cfg.resumeSessionID != "" {
+		return s, nil
+	}
 	controlCtx, controlCancel := context.WithTimeout(sessionCtx, 30*time.Second)
 	defer controlCancel()
 	if cfg.initialModel != "" && cfg.initialModel != s.ModelControls().CurrentModel {

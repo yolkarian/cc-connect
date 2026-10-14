@@ -128,6 +128,12 @@ Notes:
 
 If you want to restrict the bot to specific users/groups, you'll need the Chat ID.
 
+Before using `getUpdates` manually, **stop cc-connect and any other poller
+using this bot token**. Telegram permits only one receive consumer per bot;
+opening the URL while cc-connect runs can interrupt its polling with HTTP 409.
+Restart cc-connect after the inspection. Never use a negative offset to inspect
+the queue: Telegram forgets earlier pending updates.
+
 ### 3.1 Get Your Personal Chat ID
 
 1. Send any message to your bot
@@ -198,6 +204,48 @@ level=INFO msg="cc-connect is running" projects=1
 ```
 
 ---
+
+## Polling and recovery
+
+The fork owns the receive loop; the Telegram SDK is used for outbound methods.
+Startup authenticates with `getMe`, then performs a non-blocking `getUpdates`
+request using the current positive offset. **Only a successfully decoded polling
+response, including an empty response, marks the platform ready.** Authentication
+or a healthy local API socket alone does not establish Telegram delivery health.
+
+- There is one synchronous poller per platform. Long polls use a 59-second
+  server timeout with a 90-second HTTP client timeout. `Stop` cancels both
+  authentication and in-flight polling; duplicate `Start` calls are rejected.
+- A request, body-read, decoding, or Bot API failure immediately marks the
+  connection unavailable and returns to the recovery loop. The next attempt
+  creates a fresh HTTP client and **independent transport connection pool**,
+  preserving proxy, authentication, TLS, and HTTP/2 configuration. Recovery
+  does not require a container restart or a DNS/model/credential change.
+- Retries back off from 1 to 30 seconds. Completed successful polls over a stable
+  interval reset backoff; merely spending time in a failed request does not.
+  HTTP 429 `retry_after` can extend the retry delay beyond 30 seconds.
+- Updates are dispatched synchronously before advancing the confirmation offset.
+  Reconnects retain the last dispatched update ID; queued updates are not drained
+  or acknowledged ahead of dispatch. HTTP 409 is reported and retried normally,
+  **not** treated as permission to discard the queue. Check for another running
+  bot instance or an existing webhook when conflicts persist.
+
+The existing process-start replay policy still applies: message timestamps older
+than startup (with the existing two-second grace period) are ignored. This change
+preserves queued messages during **in-process reconnects**; it does not introduce
+persistent update offsets or replay old messages across process restarts.
+
+Receive recovery regressions run entirely against a loopback HTTP/2 Bot API:
+
+```bash
+go test ./platform/telegram -run TestTelegramRecovery_ -count=1
+go test -race ./platform/telegram
+```
+
+They cover header/body timeouts, readiness, independent connection pools, queued
+messages and offsets across reconnects, cancellation, duplicate starts, API
+errors, rate limiting, proxy settings, and token-safe error reporting. They do
+not create a second real Telegram consumer or prove human network delivery.
 
 ## Step 6: Start Chatting
 

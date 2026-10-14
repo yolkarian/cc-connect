@@ -71,8 +71,9 @@ const (
 )
 
 type retryLoopError struct {
-	cause retryCause
-	err   error
+	cause  retryCause
+	err    error
+	stable bool
 }
 
 func (e *retryLoopError) Error() string {
@@ -101,8 +102,9 @@ type stdlibTypingTicker struct {
 
 func (t *stdlibTypingTicker) C() <-chan time.Time { return t.Ticker.C }
 
-// botFactory creates a bot, returns it plus self user info and a blocking poll function.
-type botFactory func(token string, onUpdate func(context.Context, *models.Update), httpClient *http.Client) (telegramBot, *models.User, func(context.Context), error)
+// botFactory authenticates a bot and returns a blocking, error-reporting poller.
+// The caller owns the client's connection pool and runs only one poller at a time.
+type botFactory func(ctx context.Context, token string, onUpdate func(context.Context, *models.Update), httpClient *http.Client, lastUpdateID int64, onPollSuccess func()) (telegramBot, *models.User, func(context.Context) error, error)
 
 type Platform struct {
 	token                 string
@@ -120,10 +122,12 @@ type Platform struct {
 	handler             core.MessageHandler
 	lifecycleHandler    core.PlatformLifecycleHandler
 	cancel              context.CancelFunc
+	loopDone            chan struct{}
 	stopping            bool
 	generation          uint64
 	unavailableNotified bool
 	everConnected       bool
+	lastUpdateID        int64 // last synchronously dispatched update, retained across reconnects
 	newBot              botFactory
 	newBackoffTimer     func(time.Duration) backoffTimer
 	newTypingTicker     func(time.Duration) typingTicker
@@ -143,10 +147,13 @@ func New(opts map[string]any) (core.Platform, error) {
 	allowFrom, _ := opts["allow_from"].(string)
 	core.CheckAllowFrom("telegram", allowFrom)
 
-	// Build HTTP client with optional proxy support.
-	// Timeout must exceed the server-side long-poll duration (pollTimeout − 1s = 59s)
-	// to avoid the HTTP client racing with Telegram's response. 90s gives 30s headroom.
-	httpClient := &http.Client{Timeout: 90 * time.Second}
+	// This client is an immutable template for isolated per-connection clients,
+	// and is also used for file downloads. Keep the standard transport's dialing,
+	// TLS and HTTP/2 settings when adding an optional Telegram-only proxy.
+	httpClient := &http.Client{
+		Timeout:   telegramHTTPTimeout,
+		Transport: http.DefaultTransport.(*http.Transport).Clone(),
+	}
 	if proxyURL, _ := opts["proxy"].(string); proxyURL != "" {
 		u, err := url.Parse(proxyURL)
 		if err != nil {
@@ -157,7 +164,7 @@ func New(opts map[string]any) (core.Platform, error) {
 		if proxyUser != "" {
 			u.User = url.UserPassword(proxyUser, proxyPass)
 		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(u)}
+		httpClient.Transport.(*http.Transport).Proxy = http.ProxyURL(u)
 		slog.Info("telegram: using proxy", "proxy", u.Host, "auth", proxyUser != "")
 	}
 
@@ -221,6 +228,9 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 	if p.stopping {
 		return fmt.Errorf("telegram: platform stopped")
 	}
+	if p.cancel != nil {
+		return fmt.Errorf("telegram: platform already started")
+	}
 	if p.newBot == nil {
 		p.newBot = defaultNewBot
 	}
@@ -240,8 +250,12 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 	p.cancel = cancel
 	p.bot = nil
 	p.selfUser = nil
+	p.loopDone = make(chan struct{})
 
-	go p.connectLoop(ctx)
+	go func() {
+		defer close(p.loopDone)
+		p.connectLoop(ctx)
+	}()
 	return nil
 }
 
@@ -251,64 +265,29 @@ func (p *Platform) SetLifecycleHandler(h core.PlatformLifecycleHandler) {
 	p.lifecycleHandler = h
 }
 
-func defaultNewBot(token string, onUpdate func(context.Context, *models.Update), httpClient *http.Client) (telegramBot, *models.User, func(context.Context), error) {
-	handler := func(ctx context.Context, b *tgbot.Bot, update *models.Update) {
-		onUpdate(ctx, update)
-	}
-	opts := []tgbot.Option{
-		tgbot.WithDefaultHandler(handler),
-		tgbot.WithNotAsyncHandlers(),
-	}
-	if httpClient != nil {
-		opts = append(opts, tgbot.WithHTTPClient(60*time.Second, httpClient))
-	}
-	b, err := tgbot.New(token, opts...)
+func defaultNewBot(ctx context.Context, token string, onUpdate func(context.Context, *models.Update), httpClient *http.Client, lastUpdateID int64, onPollSuccess func()) (telegramBot, *models.User, func(context.Context) error, error) {
+	// Keep the SDK for outbound methods only. Its Start method retries polling
+	// errors internally forever, so it cannot drive our recovery lifecycle.
+	b, err := tgbot.New(token,
+		tgbot.WithSkipGetMe(),
+		tgbot.WithHTTPClient(60*time.Second, httpClient),
+		tgbot.WithErrorsHandler(func(err error) {
+			slog.Warn("telegram: SDK request error", "error", redactTelegramError(err, token))
+		}),
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	me, err := b.GetMe(ctx)
+	me, err := b.GetMe(initCtx)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("getMe: %w", err)
+		return nil, nil, nil, fmt.Errorf("getMe: %w", redactTelegramError(err, token))
 	}
-
-	// Drain pending updates before starting polling to avoid 409 Conflict.
-	// This clears any outstanding long-poll request from a previous instance.
-	drainPendingUpdates(token, httpClient)
-
-	return b, me, b.Start, nil
-}
-
-// drainPendingUpdates clears any pending updates on Telegram's side by calling
-// getUpdates with offset=-1. This terminates any outstanding long-poll request
-// from a previous bot instance, preventing 409 Conflict errors on restart.
-func drainPendingUpdates(token string, httpClient *http.Client) {
-	apiURL := "https://api.telegram.org/bot" + token + "/getUpdates?offset=-1&timeout=0"
-	client := httpClient
-	if client == nil {
-		client = http.DefaultClient
+	poll := func(ctx context.Context) error {
+		return pollTelegramUpdates(ctx, httpClient, token, lastUpdateID, onUpdate, onPollSuccess)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err != nil {
-		slog.Debug("telegram: drain updates request creation failed", "error", err)
-		return
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		slog.Debug("telegram: drain updates request failed", "error", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Read and discard response body to ensure connection is properly closed
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	slog.Debug("telegram: drained pending updates", "status", resp.StatusCode)
+	return b, me, poll, nil
 }
 
 func (p *Platform) connectLoop(ctx context.Context) {
@@ -319,14 +298,14 @@ func (p *Platform) connectLoop(ctx context.Context) {
 			return
 		}
 
-		startedAt := time.Now()
 		err := p.runConnection(ctx)
 		if ctx.Err() != nil || p.isStopping() {
 			return
 		}
 
 		wait := backoff
-		if time.Since(startedAt) >= stableConnectionWindow {
+		var retryErr *retryLoopError
+		if errors.As(err, &retryErr) && retryErr.stable {
 			wait = initialReconnectBackoff
 			backoff = initialReconnectBackoff
 		} else if backoff < maxReconnectBackoff {
@@ -336,9 +315,14 @@ func (p *Platform) connectLoop(ctx context.Context) {
 			}
 		}
 
+		var apiErr *telegramPollingAPIError
+		if errors.As(err, &apiErr) && apiErr.retryAfter > 0 {
+			wait = max(wait, time.Duration(apiErr.retryAfter)*time.Second)
+		}
+
 		if err != nil {
 			cause := retryCauseReconnectFailure
-			if retryErr, ok := err.(*retryLoopError); ok {
+			if retryErr != nil {
 				cause = retryErr.cause
 			}
 			slog.Warn(retryLogMessage(cause), "error", err, "backoff", wait)
@@ -358,8 +342,31 @@ func (p *Platform) connectLoop(ctx context.Context) {
 }
 
 func (p *Platform) runConnection(ctx context.Context) error {
+	// A new transport, not just a new SDK Bot, is required to escape persistent
+	// connection state after an outage. No active poll survives this function.
+	httpClient := cloneTelegramHTTPClient(p.httpClient)
+	defer httpClient.CloseIdleConnections()
+	var gen uint64
+	var readyAt, lastPollAt time.Time
+	onPollSuccess := func() {
+		lastPollAt = time.Now()
+		if readyAt.IsZero() {
+			readyAt = lastPollAt
+			slog.Info("telegram: connected", "bot", p.botUsername())
+			p.emitReady(gen)
+		}
+	}
+	onUpdate := func(ctx context.Context, update *models.Update) {
+		p.processUpdate(ctx, update)
+		p.mu.Lock()
+		p.lastUpdateID = update.ID
+		p.mu.Unlock()
+	}
+	p.mu.RLock()
+	lastUpdateID := p.lastUpdateID
+	p.mu.RUnlock()
 	factory := p.getNewBot()
-	b, me, startPoll, err := factory(p.token, p.processUpdate, p.httpClient)
+	b, me, startPoll, err := factory(ctx, p.token, onUpdate, httpClient, lastUpdateID, onPollSuccess)
 	if err != nil {
 		cause := retryCauseInitialConnectFailure
 		if p.hasEverConnected() {
@@ -374,19 +381,27 @@ func (p *Platform) runConnection(ctx context.Context) error {
 		return nil
 	}
 
-	gen, ok := p.publishBot(b, me)
+	var ok bool
+	gen, ok = p.publishBot(b, me)
 	if !ok {
 		return nil
 	}
 
-	slog.Info("telegram: connected", "bot", me.Username)
-	p.emitReady(gen)
-
-	// Start polling — blocks until ctx is cancelled or connection drops.
-	startPoll(ctx)
-
-	p.clearBot(gen, b)
-	return nil
+	// Authentication is not receive readiness: only a successful getUpdates
+	// response (including an empty idle response) emits OnPlatformReady.
+	err = startPoll(ctx)
+	if err == nil && ctx.Err() == nil {
+		err = fmt.Errorf("telegram: poller stopped unexpectedly")
+	}
+	p.clearBot(gen, b, err)
+	if ctx.Err() != nil || p.isStopping() {
+		return nil
+	}
+	return &retryLoopError{
+		cause:  retryCauseConnectionLost,
+		err:    err,
+		stable: !readyAt.IsZero() && lastPollAt.Sub(readyAt) >= stableConnectionWindow,
+	}
 }
 
 func (p *Platform) processUpdate(ctx context.Context, update *models.Update) {
@@ -708,7 +723,7 @@ func (p *Platform) emitReady(gen uint64) {
 	}
 }
 
-func (p *Platform) clearBot(gen uint64, b telegramBot) {
+func (p *Platform) clearBot(gen uint64, b telegramBot, err error) {
 	notify := false
 	p.mu.Lock()
 	if p.bot == b && p.generation == gen {
@@ -719,7 +734,7 @@ func (p *Platform) clearBot(gen uint64, b telegramBot) {
 	p.mu.Unlock()
 
 	if notify {
-		p.notifyUnavailable(fmt.Errorf("telegram: connection lost"))
+		p.notifyUnavailable(err)
 	}
 }
 
@@ -1645,6 +1660,9 @@ func (p *Platform) Stop() error {
 
 	if cancel != nil {
 		cancel()
+	}
+	if p.httpClient != nil {
+		p.httpClient.CloseIdleConnections()
 	}
 	return nil
 }

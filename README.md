@@ -464,7 +464,7 @@ cc-connect update --pre     # Include pre-releases
 | Platform | Feishu (Lark) | ✅ WebSocket — no public IP needed |
 | Platform | DingTalk | ✅ Stream — no public IP needed |
 | Platform | WPS Xiezuo | ✅ WebSocket — no public IP needed |
-| Platform | Telegram | ✅ Long Polling — no public IP needed |
+| Platform | Telegram | ✅ Long Polling — no public IP needed; [receive-aware recovery](docs/telegram.md#polling-and-recovery) |
 | Platform | Slack | ✅ Socket Mode — no public IP needed |
 | Platform | Discord | ✅ Gateway — no public IP needed |
 | Platform | Weibo | ✅ WebSocket — no public IP needed |

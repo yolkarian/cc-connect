@@ -239,11 +239,15 @@ func TestPlatformStart_RetriesInBackgroundUntilConnected(t *testing.T) {
 	p := &Platform{
 		token:      "token",
 		httpClient: &http.Client{},
-		newBot: func(_ string, _ func(context.Context, *models.Update), _ *http.Client) (telegramBot, *models.User, func(context.Context), error) {
+		newBot: func(_ context.Context, _ string, _ func(context.Context, *models.Update), _ *http.Client, _ int64, onPollSuccess func()) (telegramBot, *models.User, func(context.Context) error, error) {
 			if attempts.Add(1) == 1 {
 				return nil, nil, nil, errors.New("dial failed")
 			}
-			return stubBot, me, func(ctx context.Context) { <-ctx.Done() }, nil
+			return stubBot, me, func(ctx context.Context) error {
+				onPollSuccess()
+				<-ctx.Done()
+				return ctx.Err()
+			}, nil
 		},
 		newBackoffTimer: immediateTimer,
 	}
@@ -283,11 +287,15 @@ func TestPlatformStart_InitialConnectFailureEmitsUnavailableOnceBeforeReady(t *t
 	p := &Platform{
 		token:      "token",
 		httpClient: &http.Client{},
-		newBot: func(_ string, _ func(context.Context, *models.Update), _ *http.Client) (telegramBot, *models.User, func(context.Context), error) {
+		newBot: func(_ context.Context, _ string, _ func(context.Context, *models.Update), _ *http.Client, _ int64, onPollSuccess func()) (telegramBot, *models.User, func(context.Context) error, error) {
 			if attempts.Add(1) <= 2 {
 				return nil, nil, nil, errors.New("dial failed")
 			}
-			return stubBot, me, func(ctx context.Context) { <-ctx.Done() }, nil
+			return stubBot, me, func(ctx context.Context) error {
+				onPollSuccess()
+				<-ctx.Done()
+				return ctx.Err()
+			}, nil
 		},
 		newBackoffTimer: immediateTimer,
 	}
@@ -379,11 +387,15 @@ func TestPlatformLateReadyIgnoredAfterStop(t *testing.T) {
 	p := &Platform{
 		token:      "token",
 		httpClient: &http.Client{},
-		newBot: func(_ string, _ func(context.Context, *models.Update), _ *http.Client) (telegramBot, *models.User, func(context.Context), error) {
+		newBot: func(_ context.Context, _ string, _ func(context.Context, *models.Update), _ *http.Client, _ int64, onPollSuccess func()) (telegramBot, *models.User, func(context.Context) error, error) {
 			close(connectStarted)
 			defer close(connectDone)
 			<-releaseConnect
-			return stubBot, me, func(ctx context.Context) { <-ctx.Done() }, nil
+			return stubBot, me, func(ctx context.Context) error {
+				onPollSuccess()
+				<-ctx.Done()
+				return ctx.Err()
+			}, nil
 		},
 		newBackoffTimer: immediateTimer,
 	}
@@ -1035,4 +1047,3 @@ func TestProgressStyleProviderInterface(t *testing.T) {
 		t.Fatalf("ProgressStyle() = %q, want compact", got)
 	}
 }
-

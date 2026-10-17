@@ -1981,7 +1981,8 @@ func TestCUJ_H3_SharedSessionLinkedToIntegration(t *testing.T) {
 // CUJ-I1 · Rich card mode produces valid card JSON for the platform.
 // Covered by platform/feishu/card_test.go and release-gate TestCC_CARD_01_rich.
 func TestCUJ_I1_RichCardLinkedToPlatformAndIntegration(t *testing.T) {
-	t.Log("CUJ-I1: covered by platform/feishu/card_test.go + release-gate TestCC_CARD_01_rich")
+	t.Log("CUJ-I1: platform structure covered by platform/feishu/card_test.go + release-gate TestCC_CARD_01_rich")
+	t.Run("ContextUsageFooter", runRichCardContextUsageJourney)
 }
 
 // CUJ-I2 · Legacy card mode for backwards-compatibility.

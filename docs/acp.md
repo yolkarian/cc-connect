@@ -76,6 +76,40 @@ new session. The official launcher's `--resume <uuid> --model <selector>` plus
 native RPC model selection can perform such a one-time migration without
 rewriting prior JSONL records. It is not a transport fallback in cc-connect.
 
+## Context usage in reply footers
+
+The adapter implements `ContextUsageReporter` from standard ACP data only:
+
+- `session/update` with `sessionUpdate: "usage_update"` supplies `used` and
+  `size`, the current context occupancy and window. An explicitly reported
+  zero is valid; malformed, missing, or foreign-session meters are ignored.
+- `session/prompt` response `usage` supplies the turn's `inputTokens`,
+  `outputTokens`, `cachedReadTokens`, and `cachedWriteTokens`, stored before
+  emitting the final result. They may span several model/tool requests.
+
+A native meter renders as `ctx 15.6% (40960/262144)` in rich-card footers,
+including exact token counts and a one-decimal percentage. Turn totals never
+become context occupancy: a 1.28M-token turn can leave only 40,960 tokens in the
+current context. Neither model catalogs nor character-count estimates are used
+to invent missing context/window values. A new prompt clears old metrics so
+missing usage cannot reuse another turn's data. Usage notifications never enter
+the answer body, including metadata received during historical load.
+
+OMP 18.8.6 emits the native meter at the end of a turn. Do not assume a freshly
+loaded session has reported one before another turn runs. Footer visibility
+still follows `reply_footer` / `show_context_indicator` and remains off while
+streaming. Other agents retain their existing footer representation unless
+they explicitly report a known context meter.
+
+The optional local-provider integration test checks actual OMP tool turns,
+turn/context accounting, and the same UUID after process restart; no cloud key
+is needed:
+
+```bash
+CC_OMP_NATIVE_USAGE_TEST=1 go test ./agent/acp \
+  -run TestOMPContextUsage_NativeACPAndResume -v
+```
+
 ## Moving from bridge-owned preferences
 
 Old `workspace_model_overrides` or `workspace_reasoning_overrides` in the project

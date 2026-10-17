@@ -579,6 +579,10 @@ type ContextUsage struct {
 	// UsedTokens is the current token load to compare against ContextWindow when
 	// computing remaining context capacity for the next turn.
 	UsedTokens int
+	// UsedTokensKnown means the backend explicitly reported UsedTokens,
+	// including zero. It enables exact used/window detail; turn totals must
+	// never replace this authoritative current-context measurement.
+	UsedTokensKnown bool
 	// BaselineTokens is the portion of the context window always occupied by
 	// fixed runtime/system instructions and therefore excluded from user-visible
 	// "left" calculations when the agent provides it.

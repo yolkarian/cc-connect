@@ -54,6 +54,7 @@ type acpSession struct {
 	availableModes []acpModeInfo
 	currentMode    string
 	config         acpConfigCache
+	usage          acpContextUsageCache
 
 	callbacks sessionCallbacks // may be nil (tests, integration harness)
 }
@@ -406,6 +407,11 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 		return
 	}
 	s.maybeAbsorbCurrentModeUpdate(params)
+	// Usage is metadata, including when sent before a load response. Keep it
+	// out of history replay and the answer/tool event stream.
+	if s.absorbContextUsageUpdate(params) {
+		return
+	}
 	sid := s.currentACPSessionID()
 	// session/load replays historical updates before its response. The
 	// engine has already stored that history; it is not a new bot reply.
@@ -655,6 +661,9 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 		"prompt":    promptBlocks,
 	}
 
+	// A new turn must not display another turn's counters or a stale context
+	// meter if the backend omits usage (for example after cancellation).
+	s.resetContextUsage(sid)
 	slog.Debug("acp: sending session/prompt", "session_id", sid, "prompt_len", len(prompt))
 	res, err := s.tr.call(s.ctx, "session/prompt", params)
 	if err != nil {
@@ -663,6 +672,9 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 	}
 	slog.Debug("acp: session/prompt response", "session_id", sid, "response_len", len(res), "response", string(res))
 
+	// Store counters before EventResult: its consumer immediately builds the
+	// final footer. These are turn totals, not the current context footprint.
+	s.absorbPromptUsage(sid, res)
 	// Text was streamed via session/update; engine aggregates EventText.
 	s.emit(core.Event{
 		Type:      core.EventResult,

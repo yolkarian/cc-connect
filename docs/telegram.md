@@ -298,7 +298,13 @@ reply_footer = true
 
 Each turn has one expandable **Reasoning** blockquote and one expandable
 **Tools** blockquote when those channels contain events. The answer streams
-below both panels; completion adds the status footer. Telegram clients
+below both panels; completion adds the status footer. When the agent reports
+an explicit current-context meter, the footer includes exact used/window token
+counts, for example `ctx 15.6% (40960/262144)`, plus any reported turn input/output
+and cache counters. ACP turn totals are not context occupancy; missing meters
+are not guessed. `reply_footer` and `show_context_indicator` control visibility,
+and metrics remain hidden during streaming. See [ACP context usage](acp.md#context-usage-in-reply-footers).
+Telegram clients
 supporting expandable blockquotes can unfold each panel independently.
 
 ACP `agent_thought_chunk` notifications are mapped to the reasoning channel,

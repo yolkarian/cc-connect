@@ -5755,7 +5755,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					parts = splitter.SplitMarkdownByTables(fullResponse, 5)
 				}
 				richStatusFooter := e.composeRichStatusFooter(false, turnStart, e.agent, state.agentSession, state.workspaceDir)
-				if legacyStatusFooter != "" {
+				// A legacy percent-left footer would discard exact native counts
+				// and turn counters. Keep legacy CLI formatting only when there is
+				// no explicit current-context measurement.
+				if legacyStatusFooter != "" && formatKnownContextMeter(replyFooterSessionContextUsage(state.agentSession)) == "" {
 					richStatusFooter = formatElapsed(time.Since(turnStart), false, e.i18n.currentLang()) + "\n" + legacyStatusFooter
 				}
 				finalBody := resolveRichCardMarkdown(parts[0], true)
@@ -7183,7 +7186,7 @@ func (e *Engine) buildReplyFooter(agent Agent, session AgentSession, workspaceDi
 // RichCardSupporter.BuildRichCard. Layout (skipping any empty line):
 //
 //	line 1: ⏱ <i18n elapsed>                                  (subject to e.replyFooterEnabled)
-//	line 2: model · out N · in N cw N cr N · ctx N%           (subject to e.showContextIndicator)
+//	line 2: model · out N · in N cw N cr N · ctx N% [(used/window)] (subject to e.showContextIndicator)
 //	line 3: <workdir>                                         (subject to e.showWorkdirIndicator)
 //
 // Returns "" when the master replyFooterEnabled toggle is off, or while the
@@ -7241,7 +7244,8 @@ func (e *Engine) composeRichStatusFooter(streaming bool, turnStart time.Time, ag
 //   - model: from session GetModel() / agent.Name()
 //   - effort: reasoning_effort (Codex / Claude high/medium/low/xhigh)
 //   - token counts: out (output) · in (new input) · cw (cache create) · cr (cache read)
-//   - ctx %: UsedTokens / ContextWindow, capped at 100%
+//   - ctx %: UsedTokens / ContextWindow, capped at 100%; an explicit native
+//     meter also shows exact used/window counts and a one-decimal percentage
 //
 // Returns "" when usage is nil and no model is known.
 func buildClaudeStatusLineFooter(model, effort string, usage *ContextUsage) string {
@@ -7271,15 +7275,16 @@ func buildClaudeStatusLineFooter(model, effort string, usage *ContextUsage) stri
 		}
 		if usage.ContextWindow > 0 {
 			used := usage.UsedTokens
-			if used <= 0 && usage.TotalTokens > 0 {
+			if !usage.UsedTokensKnown && used <= 0 && usage.TotalTokens > 0 {
 				used = usage.TotalTokens
 			}
-			if used > 0 {
-				pct := used * 100 / usage.ContextWindow
-				if pct > 100 {
-					pct = 100
+			if used > 0 || (usage.UsedTokensKnown && used == 0) {
+				pct := math.Min(100, float64(used)/float64(usage.ContextWindow)*100)
+				if usage.UsedTokensKnown {
+					parts = append(parts, formatKnownContextMeter(usage))
+				} else {
+					parts = append(parts, fmt.Sprintf("ctx %d%%", int(pct)))
 				}
-				parts = append(parts, fmt.Sprintf("ctx %d%%", pct))
 			}
 		}
 	}
@@ -7453,7 +7458,20 @@ func replyFooterSessionContextUsage(session AgentSession) *ContextUsage {
 	return reporter.GetContextUsage()
 }
 
+// formatKnownContextMeter preserves authoritative raw token counts, including
+// explicit zero, without falling back to aggregate turn totals or baselines.
+func formatKnownContextMeter(usage *ContextUsage) string {
+	if usage == nil || !usage.UsedTokensKnown || usage.UsedTokens < 0 || usage.ContextWindow <= 0 {
+		return ""
+	}
+	pct := math.Min(100, float64(usage.UsedTokens)/float64(usage.ContextWindow)*100)
+	return fmt.Sprintf("ctx %.1f%% (%d/%d)", pct, usage.UsedTokens, usage.ContextWindow)
+}
+
 func replyFooterContextText(usage *ContextUsage, i18n *I18n) string {
+	if usage != nil && usage.UsedTokensKnown {
+		return formatKnownContextMeter(usage)
+	}
 	if usage == nil || i18n == nil {
 		return ""
 	}

@@ -42,6 +42,9 @@ func mapSessionUpdate(sessionID string, params json.RawMessage) []core.Event {
 		return mapToolCallUpdate(sid, wrap.Update)
 	case "plan":
 		return mapPlan(sid, wrap.Update)
+	case "usage_update":
+		// Context/cost metadata belongs to the session reporter, never the answer.
+		return nil
 	case "user_message_chunk":
 		// History replay during session/load — suppress to avoid echoing user input.
 		return nil

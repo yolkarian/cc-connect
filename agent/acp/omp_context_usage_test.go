@@ -92,9 +92,22 @@ func TestOMPContextUsage_NativeACPAndResume(t *testing.T) {
 		t.Helper()
 		done := make(chan error, 1)
 		go func() { done <- s.Send("Run the local context fixture.", "", nil, nil) }()
+		starts := map[string]bool{}
+		completed := map[string]bool{}
 		for {
 			select {
 			case event := <-s.Events():
+				if event.Type == core.EventToolUse || event.Type == core.EventToolResult {
+					if event.ToolCallID == "" || event.ToolName == event.ToolCallID {
+						t.Fatalf("native tool identity missing or used as display label: %+v", event)
+					}
+					if event.Type == core.EventToolUse {
+						starts[event.ToolCallID] = true
+					}
+					if event.ToolStatus == "completed" {
+						completed[event.ToolCallID] = true
+					}
+				}
 				if event.Type == core.EventPermissionRequest {
 					t.Fatal("native yolo fixture requested permission")
 				}
@@ -115,6 +128,16 @@ func TestOMPContextUsage_NativeACPAndResume(t *testing.T) {
 		}
 		if err := <-done; err != nil {
 			t.Fatal(err)
+		}
+		if wantInput == 250 {
+			if len(starts) != 1 || len(completed) != 1 {
+				t.Fatalf("native tool lifecycle incomplete: starts=%v completed=%v", starts, completed)
+			}
+			for id := range starts {
+				if !completed[id] {
+					t.Fatalf("native tool result changed call ID: %q", id)
+				}
+			}
 		}
 	}
 	// OMP's authoritative meter anchors on prompt context, not prompt+output.
@@ -142,7 +165,9 @@ func TestOMPContextUsage_NativeACPAndResume(t *testing.T) {
 	if requests.Load() != 3 {
 		t.Fatalf("unexpected resumed model requests: %d", requests.Load())
 	}
-	if err := second.Close(); err != nil { t.Fatal(err) }
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
 	agent := &Agent{cmd: cfg.command, args: cfg.args, extraEnv: cfg.extraEnv, workDir: cfg.workDir, authMethod: cfg.authMethod}
 	nativeHistory, err := agent.GetSessionHistory(ctx, id, 0)
 	if err != nil || len(nativeHistory) != 4 || requests.Load() != 3 {

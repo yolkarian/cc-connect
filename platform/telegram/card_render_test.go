@@ -263,8 +263,8 @@ func TestMarkdownFoldCalloutToExpandableQuote(t *testing.T) {
 
 func TestTelegramBuildRichCardMasksToolCallIDs(t *testing.T) {
 	p := &Platform{}
-	out := p.BuildRichCard(core.CardStatusDone, "", []core.ToolStep{{Name: "toolu_01AbCdEfGh123456", Summary: "列出文件", Done: true, Success: boolPtr(true)}, {Name: "call_999xyz", Summary: "", Done: false}}, "正文", false, "")
-	if strings.Contains(out, "toolu_01AbCdEfGh123456") || strings.Contains(out, "call_999xyz") {
+	out := p.BuildRichCard(core.CardStatusDone, "", []core.ToolStep{{ToolCallID: "toolu_01AbCdEfGh123456", Name: "toolu_01AbCdEfGh123456", Summary: "列出文件", Done: true, Success: boolPtr(true)}, {ToolCallID: "call_999xyz", Name: "call_999xyz", Done: false}, {ToolCallID: "ollama:1:bash", Name: "ollama:1:bash", Done: true}, {ToolCallID: "arbitrary-opaque-id", Name: "arbitrary-opaque-id", Done: true}}, "正文", false, "")
+	if strings.Contains(out, "toolu_01AbCdEfGh123456") || strings.Contains(out, "call_999xyz") || strings.Contains(out, "ollama:1:bash") || strings.Contains(out, "arbitrary-opaque-id") {
 		t.Fatalf("tool-call id leaked into card:\n%s", out)
 	}
 	if !strings.Contains(out, "> 🔧 **工具** — 列出文件 ✓") || !strings.Contains(out, "> 🔧 **工具** ⏳") {

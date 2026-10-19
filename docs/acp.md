@@ -64,6 +64,22 @@ native UUID. Switching back does not clear history. History inspection does not
 switch the active conversation. The bridge's own records remain available for
 agents without a backend history capability.
 
+## Tool progress identity
+
+Tool starts and update patches are associated by their opaque `toolCallId`,
+not by title, tool category, result text, or arrival order. Each call occupies
+one rich-card row, including parallel calls of the same kind. The protocol
+`kind` is the display category; `title`/`rawInput` supply the action summary.
+Call IDs never become display names. Missing fields in update patches retain
+previous metadata/output. Calls without an ID are rejected rather than guessed.
+
+`pending` and `in_progress` remain running, including output-only updates.
+Only `completed`/`failed` terminate a native call, even with no output; failure
+status is preserved. A result patch does not create a second row or duplicate
+the command title. Existing reasoning/tool folds, preview limits, and old-step
+omission are unchanged. CLI agents without call IDs retain their own existing
+result association.
+
 ## OMP 18.8.6
 
 Use the official CLI with `cmd = "omp"`, `args = ["acp"]`,

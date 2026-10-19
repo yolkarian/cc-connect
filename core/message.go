@@ -433,6 +433,7 @@ type Event struct {
 	Type                     EventType
 	Content                  string
 	ThinkingDelta            bool           // EventThinking content is a wire fragment, not a complete thought
+	ToolCallID               string         // protocol identity shared by tool start/update/result events
 	ToolName                 string         // populated for EventToolUse, EventPermissionRequest
 	ToolInput                string         // human-readable summary of tool input
 	ToolInputRaw             map[string]any // raw tool input (for EventPermissionRequest, used in allow response)

@@ -1984,6 +1984,7 @@ func TestCUJ_H3_SharedSessionLinkedToIntegration(t *testing.T) {
 // Covered by platform/feishu/card_test.go and release-gate TestCC_CARD_01_rich.
 func TestCUJ_I1_RichCardLinkedToPlatformAndIntegration(t *testing.T) {
 	t.Log("CUJ-I1: platform structure covered by platform/feishu/card_test.go + release-gate TestCC_CARD_01_rich")
+	t.Run("ToolCallLifecycle", runRichToolLifecycleJourney)
 	t.Run("ContextUsageFooter", runRichCardContextUsageJourney)
 	t.Run("SynchronousFinalDelivery", runFinalDeliveryJourney)
 }

@@ -135,10 +135,13 @@ func mapToolCall(sessionID string, update json.RawMessage) []core.Event {
 	if err := json.Unmarshal(update, &u); err != nil {
 		return nil
 	}
-	toolName := u.Title
-	if toolName == "" {
-		toolName = u.Kind
+	if u.ToolCallID == "" {
+		slog.Warn("acp: ignoring tool_call without toolCallId")
+		return nil
 	}
+	// Kind is the protocol's tool category; title is a human-readable action
+	// summary (often the full command), never a tool identity or name.
+	toolName := u.Kind
 	if toolName == "" {
 		toolName = "tool"
 	}
@@ -147,18 +150,22 @@ func mapToolCall(sessionID string, update json.RawMessage) []core.Event {
 		toolInput = u.Title
 	}
 	return []core.Event{{
-		Type:      core.EventToolUse,
-		ToolName:  toolName,
-		ToolInput: toolInput,
-		SessionID: sessionID,
+		Type:       core.EventToolUse,
+		ToolCallID: u.ToolCallID,
+		ToolName:   toolName,
+		ToolInput:  toolInput,
+		ToolStatus: strings.ToLower(strings.TrimSpace(u.Status)),
+		SessionID:  sessionID,
 	}}
 }
 
 func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 	var u struct {
-		Title      string `json:"title"`
-		ToolCallID string `json:"toolCallId"`
-		Status     string `json:"status"`
+		Title      string          `json:"title"`
+		ToolCallID string          `json:"toolCallId"`
+		Kind       string          `json:"kind"`
+		RawInput   json.RawMessage `json:"rawInput"`
+		Status     string          `json:"status"`
 		Content    []struct {
 			Type    string `json:"type"`
 			Content struct {
@@ -170,52 +177,25 @@ func mapToolCallUpdate(sessionID string, update json.RawMessage) []core.Event {
 	if err := json.Unmarshal(update, &u); err != nil {
 		return nil
 	}
-	toolLabel := u.Title
-	if toolLabel == "" {
-		toolLabel = u.ToolCallID
-	}
-	if toolLabel == "" {
-		toolLabel = "tool"
-	}
-	body := extractToolCallContentText(u.Content)
-	st := strings.ToLower(strings.TrimSpace(u.Status))
-
-	switch {
-	case st == "completed" || st == "failed":
-		if body == "" && st == "completed" {
-			return nil
-		}
-		if st == "failed" && body == "" {
-			body = "(failed)"
-		}
-		return []core.Event{{
-			Type:      core.EventToolResult,
-			ToolName:  toolLabel,
-			Content:   truncateRunes(body, 800),
-			SessionID: sessionID,
-		}}
-	case st == "in_progress" || st == "pending":
-		// Stream intermediate tool output to IM (ACP allows content while not terminal).
-		if body == "" {
-			return nil
-		}
-		return []core.Event{{
-			Type:      core.EventToolResult,
-			ToolName:  toolLabel,
-			Content:   truncateRunes(body, 800),
-			SessionID: sessionID,
-		}}
-	default:
-		if body != "" {
-			return []core.Event{{
-				Type:      core.EventToolResult,
-				ToolName:  toolLabel,
-				Content:   truncateRunes(body, 800),
-				SessionID: sessionID,
-			}}
-		}
+	if u.ToolCallID == "" {
+		slog.Warn("acp: ignoring tool_call_update without toolCallId")
 		return nil
 	}
+	toolInput := summarizeACPToolInput(u.Kind, u.RawInput)
+	if toolInput == "" {
+		toolInput = u.Title
+	}
+	// Updates are patches keyed by ID. Missing title/kind/status/output must
+	// not erase the original call or manufacture a second, completed row.
+	return []core.Event{{
+		Type:       core.EventToolResult,
+		ToolCallID: u.ToolCallID,
+		ToolName:   u.Kind,
+		ToolInput:  toolInput,
+		ToolStatus: strings.ToLower(strings.TrimSpace(u.Status)),
+		Content:    truncateRunes(extractToolCallContentText(u.Content), 800),
+		SessionID:  sessionID,
+	}}
 }
 
 func extractToolCallContentText(blocks []struct {

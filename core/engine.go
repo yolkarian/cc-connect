@@ -5100,11 +5100,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if !e.display.ToolMessages {
 					break
 				}
-				toolSteps = append(toolSteps, ToolStep{
-					Kind:    ToolStepKindTool,
-					Name:    event.ToolName,
-					Summary: truncateIf(event.ToolInput, e.display.ToolMaxLen),
-				})
+				toolSteps = mergeRichToolStep(toolSteps, event, "", e.display.ToolMaxLen)
 				if cardMessageID == nil {
 					card := buildResolvedRichCard(CardStatusWorking, "", toolSteps, partialText, true, e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir))
 					if starter, ok := p.(PreviewStarter); ok {
@@ -5232,9 +5228,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if result != "" {
 					result = truncateIf(result, e.display.ToolMaxLen)
 				}
-				if result != "" || event.ToolStatus != "" || event.ToolExitCode != nil || event.ToolSuccess != nil {
+				if result != "" || event.ToolCallID != "" || event.ToolStatus != "" || event.ToolExitCode != nil || event.ToolSuccess != nil {
 					if hasRichCard {
-						toolSteps = mergeRichToolResult(toolSteps, event, result, e.display.ToolMaxLen)
+						toolSteps = mergeRichToolStep(toolSteps, event, result, e.display.ToolMaxLen)
 						if cardMessageID == nil {
 							card := buildResolvedRichCard(CardStatusWorking, "", toolSteps, partialText, true, e.composeRichStatusFooter(true, turnStart, e.agent, state.agentSession, state.workspaceDir))
 							if starter, ok := p.(PreviewStarter); ok {
@@ -6151,49 +6147,62 @@ channelClosed:
 	}
 }
 
-func mergeRichToolResult(steps []ToolStep, event Event, result string, maxLen int) []ToolStep {
+// mergeRichToolStep applies tool lifecycle patches to one row per call ID.
+// Unidentified CLI events retain their name-based result association; an ID
+// never matches another ID (or an unidentified row) by name or arrival order.
+func mergeRichToolStep(steps []ToolStep, event Event, result string, maxLen int) []ToolStep {
 	toolName := strings.TrimSpace(event.ToolName)
-	if toolName == "" {
-		toolName = "Tool"
-	}
-
 	idx := -1
 	for i := len(steps) - 1; i >= 0; i-- {
-		if steps[i].Kind == ToolStepKindThinking {
+		step := steps[i]
+		if step.Kind == ToolStepKindThinking {
 			continue
 		}
-		if strings.TrimSpace(steps[i].Name) == "" || strings.TrimSpace(steps[i].Name) == toolName {
-			idx = i
-			break
+		if event.ToolCallID != "" {
+			if step.ToolCallID != event.ToolCallID {
+				continue
+			}
+		} else if event.Type != EventToolResult || step.ToolCallID != "" ||
+			(strings.TrimSpace(step.Name) != "" && strings.TrimSpace(step.Name) != toolName) {
+			continue
 		}
+		idx = i
+		break
 	}
 	if idx == -1 {
-		summary := strings.TrimSpace(event.ToolInput)
-		if summary != "" {
-			summary = truncateIf(summary, maxLen)
-		}
-		steps = append(steps, ToolStep{
-			Kind:    ToolStepKindTool,
-			Name:    toolName,
-			Summary: summary,
-		})
+		steps = append(steps, ToolStep{Kind: ToolStepKindTool, ToolCallID: event.ToolCallID})
 		idx = len(steps) - 1
 	}
-
-	if strings.TrimSpace(steps[idx].Name) == "" {
-		steps[idx].Name = toolName
+	step := &steps[idx]
+	status := strings.ToLower(strings.TrimSpace(event.ToolStatus))
+	if step.Done && (status == "pending" || status == "in_progress") {
+		return steps // a late progress patch cannot undo a terminal result
 	}
-	if steps[idx].Kind == "" {
-		steps[idx].Kind = ToolStepKindTool
+	if toolName != "" {
+		step.Name = toolName
 	}
-	if strings.TrimSpace(steps[idx].Summary) == "" && strings.TrimSpace(event.ToolInput) != "" {
-		steps[idx].Summary = truncateIf(strings.TrimSpace(event.ToolInput), maxLen)
+	if step.Kind == "" {
+		step.Kind = ToolStepKindTool
 	}
-	steps[idx].Result = result
-	steps[idx].Status = strings.TrimSpace(event.ToolStatus)
-	steps[idx].ExitCode = event.ToolExitCode
-	steps[idx].Success = event.ToolSuccess
-	steps[idx].Done = true
+	if input := strings.TrimSpace(event.ToolInput); input != "" {
+		step.Summary = truncateIf(input, maxLen)
+	}
+	if result != "" {
+		step.Result = result
+	}
+	if status != "" {
+		step.Status = status
+	}
+	if event.ToolExitCode != nil {
+		step.ExitCode = event.ToolExitCode
+	}
+	if event.ToolSuccess != nil {
+		step.Success = event.ToolSuccess
+	}
+	if status == "completed" || status == "failed" ||
+		(status == "" && event.ToolCallID == "" && event.Type == EventToolResult) {
+		step.Done = true
+	}
 	return steps
 }
 

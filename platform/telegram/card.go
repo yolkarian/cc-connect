@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -158,7 +157,7 @@ func cardWriteToolPanel(b *strings.Builder, steps []core.ToolStep) {
 
 func cardWriteToolStep(b *strings.Builder, step core.ToolStep) {
 	b.WriteString("> 🔧 **")
-	b.WriteString(cardInline(cardToolName(step.Name, step.Summary), 40))
+	b.WriteString(cardInline(cardToolName(step.Name, step.ToolCallID), 40))
 	b.WriteString("**")
 	if summary := cardInline(step.Summary, cardStepRunes); summary != "" {
 		b.WriteString(" — ")
@@ -183,15 +182,10 @@ func cardWriteToolStep(b *strings.Builder, step core.ToolStep) {
 	}
 }
 
-// reToolCallID matches tool-call identifiers that leak into ACP tool names
-// for synthesized sub-calls (Anthropic "toolu_…", OpenAI "call_…" ids); those
-// rows render as a generic 工具 row keyed by their summary.
-var reToolCallID = regexp.MustCompile("^(toolu_|call_|tooluse_)")
-
-// cardToolName falls back to a generic label when the ACP layer forwarded a
-// synthetic tool-call ID instead of a human tool name.
-func cardToolName(name, summary string) string {
-	if name != "" && !reToolCallID.MatchString(name) {
+// Call IDs are opaque protocol keys, never display labels. Do not recognize
+// providers or infer a tool name from an ID prefix.
+func cardToolName(name, callID string) string {
+	if name != "" && name != callID {
 		return name
 	}
 	return "工具"
@@ -266,7 +260,10 @@ func (t *telegramEditThrottler) edit(ctx context.Context, h *telegramPreviewHand
 	}
 	key := telegramEditKey(h)
 	t.mu.Lock()
-	if h.finished.Load() { t.mu.Unlock(); return nil }
+	if h.finished.Load() {
+		t.mu.Unlock()
+		return nil
+	}
 	st := t.msgs[key]
 	if st == nil {
 		st = &telegramEditState{}

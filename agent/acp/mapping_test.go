@@ -160,7 +160,7 @@ func TestMapSessionUpdate_toolCallUpdate_inProgress(t *testing.T) {
 		}
 	}`)
 	evs := mapSessionUpdate("", params)
-	if len(evs) != 1 || evs[0].Type != core.EventToolResult || evs[0].ToolName != "Run" {
+	if len(evs) != 1 || evs[0].Type != core.EventToolResult || evs[0].ToolCallID != "c1" || evs[0].ToolStatus != "in_progress" || evs[0].ToolName != "" || evs[0].ToolInput != "Run" {
 		t.Fatalf("got %+v", evs)
 	}
 }
@@ -257,7 +257,7 @@ func TestMapSessionUpdate_toolCall(t *testing.T) {
 		}
 	}`)
 	evs := mapSessionUpdate("", params)
-	if len(evs) != 1 || evs[0].Type != core.EventToolUse || evs[0].ToolName != "Read file" {
+	if len(evs) != 1 || evs[0].Type != core.EventToolUse || evs[0].ToolName != "read" || evs[0].ToolInput != "Read file" || evs[0].ToolCallID != "c1" {
 		t.Fatalf("got %+v", evs)
 	}
 }

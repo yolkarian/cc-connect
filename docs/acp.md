@@ -38,7 +38,13 @@ bound native UUID restores its own saved selection. Changing a conversation
 model does not implicitly change defaults for future conversations.
 
 An explicit resume failure is returned to the user. It does not trigger a new
-conversation or erase the saved UUID, including relay sessions. The adapter
+conversation or erase the saved UUID, including relay sessions. A new process
+waits for an in-flight teardown before resuming. If the previous writer cannot
+be confirmed stopped, that UUID stays blocked across retries; the original
+binding/history remain intact and no model prompt or replacement is started.
+Confirm the old process has exited and restart the bridge before retrying, or
+explicitly choose `/new` to start an independent conversation. A failed teardown
+for one known UUID does not block another UUID in the same chat. The adapter
 uses advertised `session/close` support to flush native state before stopping
 its subprocess; close is idempotent.
 

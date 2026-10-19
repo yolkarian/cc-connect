@@ -203,7 +203,7 @@ const (
 	MsgToolResultFmtFailed       MsgKey = "tool_result_fmt_failed"
 	MsgExecutionStopped          MsgKey = "execution_stopped"
 	MsgSessionCloseFailed        MsgKey = "session_close_failed"
-	MsgSessionResumeUnsafe       MsgKey = "session_resume_unsafe"
+	MsgSessionResumeBlocked      MsgKey = "session_resume_blocked"
 	MsgSessionCancelled          MsgKey = "session_cancelled"
 	MsgNoExecution               MsgKey = "no_execution"
 	MsgPreviousProcessing        MsgKey = "previous_processing"
@@ -771,12 +771,12 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "⚠️ 警告：停止したセッションのバックグラウンドプロセスの終了を確認できませんでした。まだ実行中で、以前の認証情報を使用している可能性があります。",
 		LangSpanish:            "⚠️ Advertencia: no se pudo confirmar que el proceso en segundo plano de la sesión detenida haya finalizado. Podría seguir en ejecución usando sus credenciales anteriores.",
 	},
-	MsgSessionResumeUnsafe: {
-		LangEnglish:            "⚠️ The previous process could not be confirmed stopped, so this conversation was NOT resumed — a brand-new session was started instead (earlier context is not carried over). This avoids two agents acting on the same conversation.",
-		LangChinese:            "⚠️ 上一个进程未能确认已停止，因此没有续接原会话，已为你开启全新会话（此前上下文未带入）。这是为了避免两个智能体同时操作同一个会话。",
-		LangTraditionalChinese: "⚠️ 上一個行程未能確認已停止，因此沒有續接原會話，已為你開啟全新會話（先前上下文未帶入）。這是為了避免兩個智能體同時操作同一個會話。",
-		LangJapanese:           "⚠️ 前のプロセスの停止を確認できなかったため、会話を再開せず新しいセッションを開始しました（以前の文脈は引き継がれません）。同じ会話を2つのエージェントが操作するのを防ぐためです。",
-		LangSpanish:            "⚠️ No se pudo confirmar que el proceso anterior se detuviera, así que no se reanudó esta conversación: se inició una sesión nueva (sin el contexto anterior). Así se evita que dos agentes actúen sobre la misma conversación.",
+	MsgSessionResumeBlocked: {
+		LangEnglish:            "⚠️ Cannot resume session %s: the previous process is not confirmed stopped. Its UUID/history were kept; no replacement was created. Confirm the old process has exited and restart the bridge before retrying, or use /new to explicitly start another conversation.",
+		LangChinese:            "⚠️ 无法恢复会话 %s：尚未确认旧进程已停止。原 UUID 和历史已保留，未创建替代会话。请确认旧进程已退出并重启桥接后重试，或用 /new 显式新建会话。",
+		LangTraditionalChinese: "⚠️ 無法恢復會話 %s：尚未確認舊行程已停止。原 UUID 和歷史已保留，未建立替代會話。請確認舊行程已退出並重新啟動橋接後重試，或用 /new 明確建立新會話。",
+		LangJapanese:           "⚠️ セッション %s を再開できません：前のプロセスの終了を確認できていません。元の UUID と履歴は保持され、代替セッションは作成されていません。古いプロセスの終了を確認してブリッジを再起動してから再試行するか、/new で明示的に新しい会話を開始してください。",
+		LangSpanish:            "⚠️ No se puede reanudar la sesión %s: no se ha confirmado que el proceso anterior haya terminado. Se conservaron su UUID e historial; no se creó otra sesión. Confirma que el proceso haya finalizado y reinicia el puente antes de reintentar, o usa /new para iniciar otra conversación explícitamente.",
 	},
 	MsgSessionCancelled: {
 		LangEnglish:            "Session cancelled. Ready for new instructions.",

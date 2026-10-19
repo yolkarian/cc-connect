@@ -1829,6 +1829,8 @@ func TestCUJ_F2_ModelSwitchLinkedToAgent(t *testing.T) {
 
 // CUJ-F5 · Native model/effort controls preserve the visible conversation.
 func TestCUJ_F5_NativeModelAndReasoningPreserveHistory(t *testing.T) {
+	t.Run("UnconfirmedTeardown", runUnconfirmedTeardownJourney)
+
 	env := newCUJEnv(t)
 	live := newNativeControlTestSession("original-uuid")
 	env.engine.agent = &nativeControlTestAgent{session: live}

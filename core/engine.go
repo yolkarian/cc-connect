@@ -493,7 +493,7 @@ type Engine struct {
 	// one conversation lineage, each acting on it independently.
 	closingMu       sync.Mutex
 	closingSessions map[string]chan struct{} // sessionKey → closed when teardown finishes
-	unsafeResume    map[string]bool          // sessionKey → next spawn must start fresh, not resume
+	unsafeResume    map[string]bool          // sessionKey + UUID → previous writer was not confirmed dead
 
 	platformLifecycleMu sync.Mutex
 	platformReady       map[Platform]bool
@@ -4321,7 +4321,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	}
 
 	if err := e.nativeModelMigrationError(); err != nil {
-		state := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true, startError: err}
+		state := &interactiveState{platform: p, replyCtx: replyCtx, agent: agent, eventsNeedResync: true, busySession: session, startError: err}
 		adoptPendingFromPlaceholder(e.interactiveStates[sessionKey], state)
 		e.interactiveStates[sessionKey] = state
 		return state
@@ -4400,22 +4400,20 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 			startSessionID = ""
 		}
 	}
-	// Refuse to resume when the previous process could not be confirmed dead
-	// (close reported a kill failure, timed out, or we gave up waiting for it).
-	// Starting fresh loses this conversation's history, but resuming would put
-	// two live agents on one transcript — both replying, both calling tools.
-	if startSessionID != "" && (!closeSettled || e.consumeUnsafeResume(sessionKey)) {
-		slog.Warn("previous agent process not confirmed dead, starting a fresh session instead of resuming",
-			"session_key", sessionKey, "abandoned_session_id", startSessionID)
-		session.SetAgentSessionID("", agent.Name())
-		sessions.Save()
-		startSessionID = ""
-		e.send(p, replyCtx, e.i18n.T(MsgSessionResumeUnsafe))
-	}
-
 	isResume := startSessionID != ""
 	startAt := time.Now()
-	agentSession, err := agent.StartSession(e.ctx, startSessionID)
+	var agentSession AgentSession
+	var err error
+	if isResume && (!closeSettled || e.isUnsafeResume(sessionKey, startSessionID)) {
+		// Neither competing with an unconfirmed writer nor replacing the
+		// conversation is safe. Keep the UUID/history and block repeated
+		// retries until an operator resolves the uncertainty. /new remains
+		// an explicit user choice and does not poison another UUID.
+		e.markUnsafeResume(sessionKey, startSessionID)
+		err = fmt.Errorf("%s", e.i18n.Tf(MsgSessionResumeBlocked, startSessionID))
+	} else {
+		agentSession, err = agent.StartSession(e.ctx, startSessionID)
+	}
 	startElapsed := time.Since(startAt)
 	if err != nil {
 		// An explicit resume must fail visibly, never silently replace the
@@ -4745,11 +4743,10 @@ func (e *Engine) awaitSessionClose(sessionKey string) bool {
 	}
 }
 
-// markUnsafeResume records that sessionKey's previous agent process could not
-// be confirmed dead, so its agent session ID must not be resumed. Resuming it
-// would attach a second live process to the same conversation — both would
-// read and write the same transcript and act on it independently.
-func (e *Engine) markUnsafeResume(sessionKey string) {
+// markUnsafeResume records an unconfirmed writer. Scope it to the UUID so an
+// explicit /new is independent; retain it across retries so a second request
+// cannot reopen the uncertain conversation. An unknown UUID blocks the key.
+func (e *Engine) markUnsafeResume(sessionKey, agentSessionID string) {
 	if sessionKey == "" {
 		return
 	}
@@ -4757,23 +4754,17 @@ func (e *Engine) markUnsafeResume(sessionKey string) {
 	if e.unsafeResume == nil {
 		e.unsafeResume = make(map[string]bool)
 	}
-	e.unsafeResume[sessionKey] = true
+	e.unsafeResume[sessionKey+"\x00"+agentSessionID] = true
 	e.closingMu.Unlock()
 }
 
-// consumeUnsafeResume reports (and clears) whether the next spawn for
-// sessionKey must start a fresh agent session instead of resuming.
-func (e *Engine) consumeUnsafeResume(sessionKey string) bool {
+func (e *Engine) isUnsafeResume(sessionKey, agentSessionID string) bool {
 	if sessionKey == "" {
 		return false
 	}
 	e.closingMu.Lock()
 	defer e.closingMu.Unlock()
-	if !e.unsafeResume[sessionKey] {
-		return false
-	}
-	delete(e.unsafeResume, sessionKey)
-	return true
+	return e.unsafeResume[sessionKey+"\x00"+agentSessionID] || e.unsafeResume[sessionKey+"\x00"]
 }
 
 func (e *Engine) closeAgentSessionAsync(sessionKey string, agentSession AgentSession, platform Platform, replyCtx any) {
@@ -4829,7 +4820,7 @@ func (e *Engine) closeAgentSession(sessionKey string, agentSession AgentSession,
 				"session", sessionKey, "error", closeErr)
 			// The old process may still hold this conversation open — the
 			// next turn must not resume into it.
-			e.markUnsafeResume(sessionKey)
+			e.markUnsafeResume(sessionKey, agentSession.CurrentSessionID())
 			e.notifySessionCloseFailure(sessionKey, platform, replyCtx, closeErr)
 			return
 		}
@@ -4839,7 +4830,7 @@ func (e *Engine) closeAgentSession(sessionKey string, agentSession AgentSession,
 	case <-time.After(closeTimeout):
 		slog.Error("agent session close timed out, abandoning",
 			"timeout", closeTimeout, "session", sessionKey)
-		e.markUnsafeResume(sessionKey)
+		e.markUnsafeResume(sessionKey, agentSession.CurrentSessionID())
 		e.notifySessionCloseFailure(sessionKey, platform, replyCtx,
 			fmt.Errorf("did not respond within %s", closeTimeout))
 	}

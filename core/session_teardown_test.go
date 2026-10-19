@@ -15,8 +15,8 @@ import (
 //
 // beginSessionClose/awaitSessionClose serialise that, and markUnsafeResume
 // records the case where the previous process could not be confirmed dead —
-// there, losing conversation history is strictly better than two agents
-// fighting over one transcript.
+// neither a competing writer nor a replacement conversation is safe. The
+// original UUID/history must remain available for explicit recovery.
 
 func TestAwaitSessionCloseBlocksUntilTeardownFinishes(t *testing.T) {
 	e := newTestEngine()
@@ -98,23 +98,28 @@ func TestOverlappingTeardownKeepsSpawnBlocked(t *testing.T) {
 	}
 }
 
-func TestUnsafeResumeIsConsumedExactlyOnce(t *testing.T) {
+func TestUnsafeResumeRemainsBlockedOnlyForUnconfirmedUUID(t *testing.T) {
 	e := newTestEngine()
 	defer e.cancel()
 
 	const key = "test:chat-4:user-4"
-	if e.consumeUnsafeResume(key) {
-		t.Fatal("a session key with no failed teardown must not be flagged unsafe to resume")
+	if e.isUnsafeResume(key, "original-uuid") {
+		t.Fatal("a session with no failed teardown must be resumable")
 	}
 
-	e.markUnsafeResume(key)
-	if !e.consumeUnsafeResume(key) {
-		t.Fatal("after an unconfirmed teardown the next spawn must start a fresh agent " +
-			"session instead of resuming the one that may still be live")
+	e.markUnsafeResume(key, "original-uuid")
+	for attempt := 0; attempt < 2; attempt++ {
+		if !e.isUnsafeResume(key, "original-uuid") {
+			t.Fatal("an unconfirmed writer must stay blocked across retries")
+		}
 	}
-	if e.consumeUnsafeResume(key) {
-		t.Fatal("the unsafe-resume flag must be cleared once consumed; " +
-			"leaving it set would discard conversation history on every later spawn")
+	if e.isUnsafeResume(key, "explicit-new-uuid") || e.isUnsafeResume("test:other:user", "original-uuid") {
+		t.Fatal("uncertainty must not leak to another conversation")
+	}
+
+	e.markUnsafeResume(key, "")
+	if !e.isUnsafeResume(key, "unknown-writer-uuid") {
+		t.Fatal("an unknown writer identity must block resume for its key")
 	}
 }
 
@@ -152,8 +157,8 @@ func TestSessionCloseGuardIgnoresEmptyKey(t *testing.T) {
 	if !e.awaitSessionClose("") {
 		t.Fatal("awaitSessionClose must not block on an empty session key")
 	}
-	e.markUnsafeResume("")
-	if e.consumeUnsafeResume("") {
+	e.markUnsafeResume("", "uuid")
+	if e.isUnsafeResume("", "uuid") {
 		t.Fatal("an empty session key must never be flagged unsafe to resume")
 	}
 }

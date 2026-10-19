@@ -173,5 +173,21 @@ func TestOMPContextUsage_NativeACPAndResume(t *testing.T) {
 	if err != nil || len(nativeHistory) != 4 || requests.Load() != 3 {
 		t.Fatalf("native history probe lost turns or triggered inference: entries=%+v err=%v requests=%d", nativeHistory, err, requests.Load())
 	}
-	t.Logf("official OMP context/history passed: UUID preserved, metadata-only history=4 entries, current=200/1000000, resumed turn=200+30, requests=%d", requests.Load())
+	listed, err := agent.ListSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, session := range listed {
+		if session.ID == id {
+			found = true
+			if session.MessageCount <= 0 {
+				t.Fatalf("native populated session listed as zero/unknown: %+v", session)
+			}
+		}
+	}
+	if !found || requests.Load() != 3 {
+		t.Fatalf("session/list lost UUID or triggered inference: found=%t requests=%d", found, requests.Load())
+	}
+	t.Logf("official OMP context/history/list passed: UUID preserved, native count>0, metadata-only history=4 entries, current=200/1000000, resumed turn=200+30, requests=%d", requests.Load())
 }

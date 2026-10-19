@@ -1258,6 +1258,7 @@ func TestCUJ_B1_NewCreatesIndependentSession(t *testing.T) {
 
 // CUJ-B2 · /list shows all sessions for the user.
 func TestCUJ_B2_ListShowsAllSessions(t *testing.T) {
+	t.Run("NativeMessageCounts", runSessionListCountJourney)
 	env := newCUJEnv(t)
 	key := "test:b2"
 	env.userSends("b2", "hi")

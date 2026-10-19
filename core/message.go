@@ -461,11 +461,15 @@ type HistoryEntry struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// UnknownMessageCount marks a count the backend did not report.
+// A reported zero remains a valid count, distinct from missing metadata.
+const UnknownMessageCount = -1
+
 // AgentSessionInfo describes one session as reported by the agent backend.
 type AgentSessionInfo struct {
 	ID           string
 	Summary      string
-	MessageCount int
+	MessageCount int // nonnegative native count, or UnknownMessageCount
 	ModifiedAt   time.Time
 	GitBranch    string
 }

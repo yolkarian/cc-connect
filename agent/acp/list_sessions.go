@@ -58,10 +58,11 @@ type acpSessionListResult struct {
 }
 
 type acpSessionListEntry struct {
-	SessionID string `json:"sessionId"`
-	Cwd       string `json:"cwd"`
-	Title     string `json:"title,omitempty"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	SessionID string          `json:"sessionId"`
+	Cwd       string          `json:"cwd"`
+	Title     string          `json:"title,omitempty"`
+	UpdatedAt string          `json:"updatedAt,omitempty"`
+	Meta      json.RawMessage `json:"_meta,omitempty"`
 }
 
 // probeSpawn launches `<cmd> <args...>`, sets up a JSON-RPC transport
@@ -247,8 +248,17 @@ func convertSessionList(entries []acpSessionListEntry, cwdFilter string) []core.
 			continue
 		}
 		info := core.AgentSessionInfo{
-			ID:      e.SessionID,
-			Summary: strings.TrimSpace(e.Title),
+			ID:           e.SessionID,
+			Summary:      strings.TrimSpace(e.Title),
+			MessageCount: core.UnknownMessageCount,
+		}
+		// Counts are optional native metadata, not the zero value of an int.
+		// Decode separately so malformed optional metadata cannot hide a session.
+		var meta struct {
+			MessageCount *int `json:"messageCount"`
+		}
+		if json.Unmarshal(e.Meta, &meta) == nil && meta.MessageCount != nil && *meta.MessageCount >= 0 {
+			info.MessageCount = *meta.MessageCount
 		}
 		if t, err := time.Parse(time.RFC3339, e.UpdatedAt); err == nil {
 			info.ModifiedAt = t

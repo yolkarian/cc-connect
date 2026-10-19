@@ -6927,6 +6927,13 @@ func filterOwnedSessions(sessions []AgentSessionInfo, known map[string]struct{})
 
 const listPageSize = 20
 
+func sessionMessageCount(count int) string {
+	if count < 0 {
+		return "—"
+	}
+	return strconv.Itoa(count)
+}
+
 // dirCardPageSize is the max directory history rows per card page (Feishu / other card UIs).
 const dirCardPageSize = 20
 
@@ -6991,14 +6998,13 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 				displayName = strings.ReplaceAll(s.Summary, "\n", " ")
 				displayName = strings.Join(strings.Fields(displayName), " ")
 				if displayName == "" {
-					displayName = "(empty)"
+					displayName = e.i18n.T(MsgUntitled)
 				}
 				if len([]rune(displayName)) > 40 {
 					displayName = string([]rune(displayName)[:40]) + "…"
 				}
 			}
-			sb.WriteString(fmt.Sprintf("%s **%d.** %s · **%d** msgs · %s\n",
-				marker, i+1, displayName, s.MessageCount, s.ModifiedAt.Format("01-02 15:04")))
+			sb.WriteString(e.i18n.Tf(MsgListItem, marker, i+1, displayName, sessionMessageCount(s.MessageCount), s.ModifiedAt.Format("01-02 15:04")) + "\n")
 		}
 		if totalPages > 1 {
 			sb.WriteString(fmt.Sprintf(e.i18n.T(MsgListPageHint), page, totalPages))
@@ -7069,7 +7075,7 @@ func (e *Engine) cmdSwitch(p Platform, msg *Message, args []string) {
 		displayName = matched.Summary
 	}
 	e.reply(p, msg.ReplyCtx,
-		e.i18n.Tf(MsgSwitchSuccess, displayName, shortID, matched.MessageCount))
+		e.i18n.Tf(MsgSwitchSuccess, displayName, shortID, sessionMessageCount(matched.MessageCount)))
 }
 
 // matchSession resolves a user query to an agent session. Priority:
@@ -12579,7 +12585,7 @@ func (e *Engine) renderDeleteModeSelectCard(sessionKey string, sessions *Session
 			btnType = "primary"
 		}
 		cb.ListItemBtn(
-			e.i18n.Tf(MsgListItem, marker, i+1, e.deleteSessionDisplayName(sessions, &s), s.MessageCount, s.ModifiedAt.Format("01-02 15:04")),
+			e.i18n.Tf(MsgListItem, marker, i+1, e.deleteSessionDisplayName(sessions, &s), sessionMessageCount(s.MessageCount), s.ModifiedAt.Format("01-02 15:04")),
 			btnText,
 			btnType,
 			action,
@@ -13145,7 +13151,7 @@ func (e *Engine) renderListCard(sessionKey string, page int) (*Card, error) {
 			displayName = strings.ReplaceAll(s.Summary, "\n", " ")
 			displayName = strings.Join(strings.Fields(displayName), " ")
 			if displayName == "" {
-				displayName = e.i18n.T(MsgListEmptySummary)
+				displayName = e.i18n.T(MsgUntitled)
 			}
 			if len([]rune(displayName)) > 40 {
 				displayName = string([]rune(displayName)[:40]) + "…"
@@ -13156,7 +13162,7 @@ func (e *Engine) renderListCard(sessionKey string, page int) (*Card, error) {
 			btnType = "primary"
 		}
 		cb.ListItemBtn(
-			e.i18n.Tf(MsgListItem, marker, i+1, displayName, s.MessageCount, s.ModifiedAt.Format("01-02 15:04")),
+			e.i18n.Tf(MsgListItem, marker, i+1, displayName, sessionMessageCount(s.MessageCount), s.ModifiedAt.Format("01-02 15:04")),
 			fmt.Sprintf("#%d", i+1),
 			btnType,
 			fmt.Sprintf("act:/switch %d", i+1),

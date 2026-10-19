@@ -181,7 +181,7 @@ const (
 	MsgToolAllowFailed           MsgKey = "tool_allow_failed"
 	MsgToolAllowedNew            MsgKey = "tool_allowed_new"
 	MsgError                     MsgKey = "error"
-	MsgReplyDeliveryIncomplete MsgKey = "reply_delivery_incomplete"
+	MsgReplyDeliveryIncomplete   MsgKey = "reply_delivery_incomplete"
 	MsgSessionNotFound           MsgKey = "session_not_found"
 	MsgFailedToStartAgentSession MsgKey = "failed_to_start_agent_session"
 	MsgFailedToDeleteSession     MsgKey = "failed_to_delete_session"
@@ -377,7 +377,6 @@ const (
 	MsgCardTitleVersion          MsgKey = "card_title_version"
 	MsgCardTitleUpgrade          MsgKey = "card_title_upgrade"
 	MsgListItem                  MsgKey = "list_item"
-	MsgListEmptySummary          MsgKey = "list_empty_summary"
 	MsgCronIDLabel               MsgKey = "cron_id_label"
 	MsgCronFailedSuffix          MsgKey = "cron_failed_suffix"
 
@@ -1447,11 +1446,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "❌ Error al listar sesiones: %v",
 	},
 	MsgReplyDeliveryIncomplete: {
-		LangEnglish: "The answer was generated, but delivery did not complete. History is saved; use /history to inspect it. The task has not been restarted.",
-		LangChinese: "回答已生成，但发送未完成。历史已保存，可用 /history 查看；任务没有被重新执行。",
+		LangEnglish:            "The answer was generated, but delivery did not complete. History is saved; use /history to inspect it. The task has not been restarted.",
+		LangChinese:            "回答已生成，但发送未完成。历史已保存，可用 /history 查看；任务没有被重新执行。",
 		LangTraditionalChinese: "回答已產生，但傳送未完成。歷史已儲存，可用 /history 查看；任務沒有被重新執行。",
-		LangJapanese: "回答は生成されましたが、配信が完了しませんでした。履歴は保存されています。/history で確認できます。タスクは再実行していません。",
-		LangSpanish: "La respuesta se generó, pero su entrega no se completó. El historial está guardado; consulta /history. La tarea no se ha reiniciado.",
+		LangJapanese:           "回答は生成されましたが、配信が完了しませんでした。履歴は保存されています。/history で確認できます。タスクは再実行していません。",
+		LangSpanish:            "La respuesta se generó, pero su entrega no se completó. El historial está guardado; consulta /history. La tarea no se ha reiniciado.",
 	},
 	MsgHistoryEmpty: {
 		LangEnglish:            "No history in current session.",
@@ -2637,15 +2636,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese: "アップグレード", LangSpanish: "Actualización",
 	},
 	MsgListItem: {
-		LangEnglish:            "%s **%d.** %s · **%d** msgs · %s",
-		LangChinese:            "%s **%d.** %s · **%d** 条消息 · %s",
-		LangTraditionalChinese: "%s **%d.** %s · **%d** 則訊息 · %s",
-		LangJapanese:           "%s **%d.** %s · **%d** 件のメッセージ · %s",
-		LangSpanish:            "%s **%d.** %s · **%d** mensajes · %s",
-	},
-	MsgListEmptySummary: {
-		LangEnglish: "(empty)", LangChinese: "（空）", LangTraditionalChinese: "（空）",
-		LangJapanese: "（空）", LangSpanish: "(vacío)",
+		LangEnglish:            "%s **%d.** %s · **%s** msgs · %s",
+		LangChinese:            "%s **%d.** %s · **%s** 条消息 · %s",
+		LangTraditionalChinese: "%s **%d.** %s · **%s** 則訊息 · %s",
+		LangJapanese:           "%s **%d.** %s · **%s** 件のメッセージ · %s",
+		LangSpanish:            "%s **%d.** %s · **%s** mensajes · %s",
 	},
 	MsgCronIDLabel: {
 		LangEnglish: "ID: %s\n", LangChinese: "ID：%s\n", LangTraditionalChinese: "ID：%s\n",
@@ -3202,11 +3197,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "🗑️ Sesión eliminada: %s",
 	},
 	MsgSwitchSuccess: {
-		LangEnglish:            "✅ Switched to: %s (%s, %d msgs)",
-		LangChinese:            "✅ 已切换到：%s（%s，%d 条消息）",
-		LangTraditionalChinese: "✅ 已切換到：%s（%s，%d 則訊息）",
-		LangJapanese:           "✅ 切り替え：%s（%s、%d件）",
-		LangSpanish:            "✅ Cambiado a: %s (%s, %d mensajes)",
+		LangEnglish:            "✅ Switched to: %s (%s, %s msgs)",
+		LangChinese:            "✅ 已切换到：%s（%s，%s 条消息）",
+		LangTraditionalChinese: "✅ 已切換到：%s（%s，%s 則訊息）",
+		LangJapanese:           "✅ 切り替え：%s（%s、%s件）",
+		LangSpanish:            "✅ Cambiado a: %s (%s, %s mensajes)",
 	},
 	MsgSwitchNoMatch: {
 		LangEnglish:            "❌ No session matching %q",

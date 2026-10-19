@@ -64,6 +64,21 @@ native UUID. Switching back does not clear history. History inspection does not
 switch the active conversation. The bridge's own records remain available for
 agents without a backend history capability.
 
+## Session-list counts and titles
+
+`/list` reads the native `session/list` response. When `_meta.messageCount`
+contains a nonnegative integer, its exact native value is displayed; an
+explicit zero remains zero. Missing, null, or malformed counts display `—`,
+not a fabricated zero. The same rule applies to text/card lists and switching
+acknowledgements. Other adapters retain their reported integer counts.
+
+Counts have the backend's own meaning; the bridge does not reinterpret them as
+transcript line counts, tool-call counts, token totals, or byte sizes. Listing
+never loads every session, prompts a model, or reconstructs counts from a
+partial bridge history. A missing native title displays as `(untitled)` (with
+localization), not an assertion that the session is empty. Custom names remain
+unchanged.
+
 ## Tool progress identity
 
 Tool starts and update patches are associated by their opaque `toolCallId`,

@@ -290,7 +290,7 @@ func (e *Engine) cmdNativeReasoning(p Platform, msg *Message, args []string) {
 		buttons = append(buttons, []ButtonOption{{Text: effort, Data: "cmd:/reasoning " + effort}})
 	}
 	sb.WriteString("\n")
-	sb.WriteString(e.i18n.T(MsgReasoningUsage))
+	sb.WriteString(e.reasoningUsage(controls.ReasoningEfforts))
 	e.replyWithButtons(p, msg.ReplyCtx, sb.String(), buttons)
 }
 
@@ -307,7 +307,7 @@ func (e *Engine) nativeReasoningOptionsCard(controls ModelControls) *Card {
 	return NewCard().Title(e.i18n.T(MsgCardTitleReasoning), "orange").
 		Markdown(e.i18n.Tf(MsgReasoningCurrent, controls.CurrentReasoningEffort)).
 		Select(e.i18n.T(MsgReasoningSelectPlaceholder), options, current).
-		Buttons(e.cardBackButton()).Note(e.i18n.T(MsgReasoningUsage)).Build()
+		Buttons(e.cardBackButton()).Note(e.reasoningUsage(controls.ReasoningEfforts)).Build()
 }
 
 func (e *Engine) renderNativeReasoningCard(sessionKey string) *Card {

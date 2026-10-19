@@ -61,7 +61,7 @@ func TestProcessInteractiveEvents_RichCardCoalescesThoughtDeltas(t *testing.T) {
 	}
 	live.events <- Event{Type: EventText, Content: "ANSWER_ONLY"}
 	live.events <- Event{Type: EventResult, Content: "ANSWER_ONLY", Done: true}
-	e.processInteractiveEvents(state, saved, e.sessions, key, "msg", time.Now(), nil, nil, state.replyCtx)
+	e.processInteractiveEvents(state, saved, e.sessions, key, "msg", time.Now(), nil, nil, state.replyCtx, 0)
 	edits := p.getPreviewEdits()
 	if len(edits) == 0 {
 		t.Fatal("no rich card updates")

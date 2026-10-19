@@ -129,6 +129,29 @@ func TestNativeModelControl_TextAndCardsPreserveConversation(t *testing.T) {
 	}
 }
 
+func TestNativeReasoning_UsageListsSessionEfforts(t *testing.T) {
+	p := &stubPlatformEngine{n: "telegram"}
+	live := newNativeControlTestSession("original-uuid")
+	agent := &nativeControlTestAgent{session: live}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	defer e.cleanupInteractiveState("telegram:c:u")
+	msg := &Message{SessionKey: "telegram:c:u", ReplyCtx: "ctx"}
+	e.sessions.GetOrCreateActive(msg.SessionKey).SetAgentSessionID("original-uuid", agent.Name())
+	want := "`/reasoning <off|high|max>`"
+
+	e.cmdReasoning(p, msg, nil)
+	if len(p.sent) != 1 || !strings.Contains(p.sent[0], want) || strings.Contains(p.sent[0], "%") {
+		t.Fatalf("native reasoning text=%v, want usage %s", p.sent, want)
+	}
+	card := e.renderReasoningCard(msg.SessionKey)
+	for _, element := range card.Elements {
+		if note, ok := element.(CardNote); ok && strings.Contains(note.Text, want) {
+			return
+		}
+	}
+	t.Fatalf("native reasoning card=%#v, want usage note %s", card.Elements, want)
+}
+
 func TestNativeModelControl_FailedChangePreservesState(t *testing.T) {
 	p := &stubPlatformEngine{n: "telegram"}
 	live := newNativeControlTestSession("original-uuid")

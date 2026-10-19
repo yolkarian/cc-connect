@@ -53,7 +53,7 @@
 
 通过 cc-connect，你可以将本地运行的 Kimi CLI 连接到飞书、钉钉、Telegram、Slack、Discord、企业微信等即时通讯工具，随时让 Kimi 阅读和修改代码、排查问题、执行命令与处理自动化任务。
 
-**cc-connect 已支持 Kimi CLI。立即体验 **[Kimi Code 订阅](https://www.kimi.com/code/?aff=cc-connect)**，或前往 Kimi 开放平台（[中文站](https://platform.kimi.com?track_id=track-78c5d46574a54286a4ff42f7331272ba&aff=cc-connect)｜[Global](https://platform.kimi.ai?track_id=track-dd37b0bea7a64b99b3fe2217b398e20b&aff=cc-connect)）使用 API。
+cc-connect 已支持 Kimi CLI。立即体验 **Kimi Code 订阅**（[中文站](https://www.kimi.com/code?aff=cc-connect)｜[Global](https://www.kimi.ai/code?aff=cc-connect)），或前往 Kimi 开放平台（[中文站](https://platform.kimi.com?track_id=track-78c5d46574a54286a4ff42f7331272ba&aff=cc-connect)｜[Global](https://platform.kimi.ai?track_id=track-dd37b0bea7a64b99b3fe2217b398e20b&aff=cc-connect)）使用 API。
 
 ---
 
@@ -76,6 +76,11 @@
 <tr>
 <td width="150"><a href="https://aigocode.com/invite/CYY3C85C"><img src="assets/sponsors/aigocode.png" alt="AIGoCode" width="120"></a></td>
 <td>感谢 AIGoCode 对本项目的赞助！AIGoCode 是集 Claude Code、Codex、最新 Gemini 模型于一体的一站式平台，提供稳定高效、高性价比的 AI 编码服务。灵活订阅方案、零封号风险、无需 VPN 直连、响应速度极快。通过 <a href="https://aigocode.com/invite/CYY3C85C">此链接</a> 注册，首充额外获得 10% 赠送额度！</td>
+</tr>
+
+<tr>
+<td width="150"><a href="https://go.apimart.ai/gh-cc-connect"><img src="assets/sponsors/apimart.png" alt="APIMart" width="120"></a></td>
+<td>感谢 APIMart 赞助本项目！APIMart 是专注 AI 图片/视频生成的低价 API 平台，GPT-Image-2 低至 $0.006/张，1 美元可出图 160+ 张。图片、视频一套异步 API 通吃，提交任务拿 ID、回调取结果，跑批万张不超时、换模型不改代码。按量付费、无月费，通过 <a href="https://go.apimart.ai/gh-cc-connect">此注册链接</a> 注册即可开用。</td>
 </tr>
 
 <tr>

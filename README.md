@@ -53,7 +53,7 @@ Thanks to [Kimi](https://www.kimi.com/code/?aff=cc-connect) for sponsoring this 
 
 With cc-connect, you can bring Kimi CLI from your local machine into Feishu/Lark, DingTalk, Telegram, Slack, Discord, WeCom, and other instant messaging tools. Wherever you are, you can continue working on local projects through chat and ask Kimi to inspect or modify code, troubleshoot issues, run commands, and handle automation tasks.
 
-**cc-connect already supports Kimi CLI. Try the **[Kimi Code subscription](https://www.kimi.com/code/?aff=cc-connect)**, or use the API through the Kimi Open Platform ([中文站](https://platform.kimi.com?track_id=track-78c5d46574a54286a4ff42f7331272ba&aff=cc-connect) | [Global](https://platform.kimi.ai?track_id=track-dd37b0bea7a64b99b3fe2217b398e20b&aff=cc-connect)).
+cc-connect already supports Kimi CLI. Try a **Kimi Code plan** ([中文站](https://www.kimi.com/code?aff=cc-connect) | [Global](https://www.kimi.ai/code?aff=cc-connect)), or use the **API** through the Kimi Open Platform ([中文站](https://platform.kimi.com?track_id=track-78c5d46574a54286a4ff42f7331272ba&aff=cc-connect) | [Global](https://platform.kimi.ai?track_id=track-dd37b0bea7a64b99b3fe2217b398e20b&aff=cc-connect)).
 
 ---
 
@@ -76,6 +76,11 @@ With cc-connect, you can bring Kimi CLI from your local machine into Feishu/Lark
 <tr>
 <td width="150"><a href="https://aigocode.com/invite/CYY3C85C"><img src="assets/sponsors/aigocode.png" alt="AIGoCode" width="120"></a></td>
 <td>Thanks to AIGoCode for sponsoring this project! AIGoCode is an all-in-one platform that integrates Claude Code, Codex, and the latest Gemini models, providing you with stable, efficient, and highly cost-effective AI coding services. The platform offers flexible subscription plans, zero risk of account suspension, direct access with no VPN required, and lightning-fast responses. AIGoCode has prepared a special benefit for cc-connect users: if you register via <a href="https://aigocode.com/invite/CYY3C85C">this link</a>, you'll receive an extra 10% bonus credit on your first top-up!</td>
+</tr>
+
+<tr>
+<td width="150"><a href="https://go.apimart.ai/gh-cc-connect"><img src="assets/sponsors/apimart.png" alt="APIMart" width="120"></a></td>
+<td>Thanks to APIMart for sponsoring this project! APIMart is a low-cost API platform for AI image & video generation — GPT-Image-2 from $0.006/image, 160+ images per dollar. One async API covers both image and video: submit a task, get an ID, fetch results via polling or callback. Batch tens of thousands of images without timeouts, switch models without changing code. Pay-as-you-go with no monthly fee — <a href="https://go.apimart.ai/gh-cc-connect">sign up here</a> to get started.</td>
 </tr>
 
 <tr>

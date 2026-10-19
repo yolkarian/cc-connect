@@ -51,7 +51,9 @@ type Agent struct {
 	modesCache   []core.PermissionModeInfo
 	modesCurrent string
 
-	mu sync.RWMutex
+	mu           sync.RWMutex
+	sessionsMu   sync.Mutex
+	liveSessions map[string]*acpSession
 }
 
 // sessionCallbacks lets a running acpSession report what it learned
@@ -251,6 +253,16 @@ func (a *Agent) SetSessionEnv(env []string) {
 }
 
 func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentSession, error) {
+	a.sessionsMu.Lock()
+	defer a.sessionsMu.Unlock()
+	for id, live := range a.liveSessions {
+		if !live.Alive() {
+			delete(a.liveSessions, id)
+		}
+	}
+	if live := a.liveSessions[sessionID]; live != nil {
+		return nil, fmt.Errorf("acp: session %q is already open", sessionID)
+	}
 	a.mu.RLock()
 	command := a.cmd
 	allArgs := append(append([]string{}, a.cliExtraArgs...), a.args...)
@@ -263,7 +275,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	extra = append(extra, a.sessionEnv...)
 	a.mu.RUnlock()
 
-	return newACPSession(ctx, acpSessionConfig{
+	session, err := newACPSession(ctx, acpSessionConfig{
 		command:          command,
 		args:             allArgs,
 		extraEnv:         extra,
@@ -275,9 +287,26 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 		initialReasoning: pendingReasoning,
 		callbacks:        a,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if a.liveSessions == nil {
+		a.liveSessions = make(map[string]*acpSession)
+	}
+	a.liveSessions[session.CurrentSessionID()] = session
+	return session, nil
 }
 
-func (a *Agent) Stop() error { return nil }
+func (a *Agent) Stop() error {
+	a.sessionsMu.Lock()
+	live := a.liveSessions
+	a.liveSessions = nil
+	a.sessionsMu.Unlock()
+	for _, session := range live {
+		_ = session.Close()
+	}
+	return nil
+}
 
 // -- AgentDoctorInfo --
 

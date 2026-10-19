@@ -439,8 +439,15 @@ type ToolAuthorizer interface {
 	GetAllowedTools() []string
 }
 
+// MessageFinalizer delivers a complete response synchronously, including any
+// overflow fragments, and supersedes queued preview edits. It owns delivery:
+// callers must not replay the whole response after an uncertain/partial error.
+type MessageFinalizer interface {
+	FinalizeMessage(ctx context.Context, previewHandle any, content string) error
+}
+
 // HistoryProvider is an optional interface for agents that can retrieve
-// conversation history from their backend session files.
+// conversation history from their backend (protocol replay or native storage).
 type HistoryProvider interface {
 	GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]HistoryEntry, error)
 }

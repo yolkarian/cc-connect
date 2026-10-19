@@ -420,6 +420,12 @@ func (sp *streamPreview) finish(finalText, statusFooter string) bool {
 			// Try to recover degraded preview via UpdateMessage before falling back to delete
 			if finalText != "" {
 				if updater, ok := sp.platform.(MessageUpdater); ok {
+					if finalizer, ok := sp.platform.(MessageFinalizer); ok {
+						if err := finalizer.FinalizeMessage(sp.ctx, sp.previewMsgID, finalText); err != nil {
+							slog.Error("stream preview: final delivery failed (not replaying partial delivery)", "error", err)
+						}
+						return true
+					}
 					if err := updater.UpdateMessage(sp.ctx, sp.previewMsgID, finalText); err == nil {
 						if sp.pendingStatus != "" {
 							if statusUpdater, ok := sp.platform.(PreviewStatusUpdater); ok {

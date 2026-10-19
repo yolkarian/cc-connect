@@ -326,6 +326,8 @@ func (env *cujEnv) activeSession(sessionKey string) *Session {
 // ===========================================================================
 
 func TestCUJ_B3_SwitchPreservesHistoryEndToEnd(t *testing.T) {
+	t.Run("CardButtonRoundTrip", TestCardSwitch_PreservesHistoryOnBothRoundTripLegs)
+	t.Run("NativeHistory", TestHistory_PrefersNativeOverPartialBridgeAndSurfacesErrors)
 	env := newCUJEnv(t)
 	key := "test:alice"
 
@@ -1983,6 +1985,7 @@ func TestCUJ_H3_SharedSessionLinkedToIntegration(t *testing.T) {
 func TestCUJ_I1_RichCardLinkedToPlatformAndIntegration(t *testing.T) {
 	t.Log("CUJ-I1: platform structure covered by platform/feishu/card_test.go + release-gate TestCC_CARD_01_rich")
 	t.Run("ContextUsageFooter", runRichCardContextUsageJourney)
+	t.Run("SynchronousFinalDelivery", runFinalDeliveryJourney)
 }
 
 // CUJ-I2 · Legacy card mode for backwards-compatibility.

@@ -55,6 +55,7 @@ type acpSession struct {
 	currentMode    string
 	config         acpConfigCache
 	usage          acpContextUsageCache
+	history        acpHistory
 
 	callbacks sessionCallbacks // may be nil (tests, integration harness)
 }
@@ -98,6 +99,9 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		callbacks:     cfg.callbacks,
 	}
 	s.alive.Store(true)
+	if cfg.resumeSessionID != core.ContinueSession {
+		s.history.bind(cfg.resumeSessionID)
+	}
 
 	cmd := exec.CommandContext(sessionCtx, cfg.command, cfg.args...)
 	cmd.Dir = absWorkDir
@@ -306,6 +310,7 @@ func (s *acpSession) absorbModes(block *acpModesBlock) {
 }
 
 func (s *acpSession) setACPSessionID(id string) {
+	s.history.bind(id)
 	s.acpSessMu.Lock()
 	s.acpSessID = id
 	s.acpSessMu.Unlock()
@@ -406,6 +411,7 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 		slog.Debug("acp: notification", "method", method)
 		return
 	}
+	s.history.absorb(params)
 	s.maybeAbsorbCurrentModeUpdate(params)
 	// Usage is metadata, including when sent before a load response. Keep it
 	// out of history replay and the answer/tool event stream.
@@ -664,6 +670,8 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 	// A new turn must not display another turn's counters or a stale context
 	// meter if the backend omits usage (for example after cancellation).
 	s.resetContextUsage(sid)
+	s.history.beginPrompt(prompt)
+	defer s.history.boundary()
 	slog.Debug("acp: sending session/prompt", "session_id", sid, "prompt_len", len(prompt))
 	res, err := s.tr.call(s.ctx, "session/prompt", params)
 	if err != nil {

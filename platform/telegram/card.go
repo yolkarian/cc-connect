@@ -30,8 +30,8 @@ const (
 	// cardResultRunes caps the optional tool-result echo line.
 	cardResultRunes = 160
 	// cardBodyStreamRunes caps the streaming body of intermediate frames.
-	// Final frames keep the full body: when an edit comes back too long the
-	// engine falls back to the chunked p.Send path.
+	// Final frames keep the full body; synchronous FinalizeMessage delivers
+	// all overflow fragments instead of queueing an oversized final edit.
 	cardBodyStreamRunes = 2400
 	// cardEditMinInterval coalesces engine-driven card edits below this pace.
 	// Thinking/tool events bypass upstream throttling (Feishu tolerates it),
@@ -240,6 +240,8 @@ type telegramEditState struct {
 	lastHTML string
 	lastEdit time.Time
 	busy     bool
+	sealed   bool
+	idle     chan struct{}
 	pendHTML string
 	pendRaw  string
 	timer    *time.Timer
@@ -264,12 +266,13 @@ func (t *telegramEditThrottler) edit(ctx context.Context, h *telegramPreviewHand
 	}
 	key := telegramEditKey(h)
 	t.mu.Lock()
+	if h.finished.Load() { t.mu.Unlock(); return nil }
 	st := t.msgs[key]
 	if st == nil {
 		st = &telegramEditState{}
 		t.msgs[key] = st
 	}
-	if html == st.lastHTML || html == st.pendHTML {
+	if st.sealed || html == st.lastHTML || html == st.pendHTML {
 		t.mu.Unlock()
 		return nil
 	}
@@ -289,6 +292,7 @@ func (t *telegramEditThrottler) edit(ctx context.Context, h *telegramPreviewHand
 	st.pendHTML, st.pendRaw = "", ""
 	st.lastEdit = time.Now()
 	st.busy = true
+	st.idle = make(chan struct{})
 	t.mu.Unlock()
 
 	err := do(ctx, h, html, raw)
@@ -303,6 +307,10 @@ func (t *telegramEditThrottler) finishEdit(key, html string, err error) error {
 	st := t.msgs[key]
 	if st != nil {
 		st.busy = false
+		if st.idle != nil {
+			close(st.idle)
+			st.idle = nil
+		}
 		if err == nil {
 			st.lastHTML = html
 		}
@@ -328,7 +336,7 @@ func (t *telegramEditThrottler) flush(h *telegramPreviewHandle, do telegramEditF
 		return
 	}
 	st.timer = nil
-	if st.pendHTML == "" {
+	if st.sealed || st.pendHTML == "" {
 		t.mu.Unlock()
 		return
 	}
@@ -343,12 +351,49 @@ func (t *telegramEditThrottler) flush(h *telegramPreviewHandle, do telegramEditF
 	st.pendHTML, st.pendRaw = "", ""
 	st.lastEdit = time.Now()
 	st.busy = true
+	st.idle = make(chan struct{})
 	t.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := do(ctx, h, html, raw)
 	t.finishEdit(key, html, err)
+	if err != nil {
+		slog.Warn("telegram: deferred preview edit failed", "error", err)
+	}
+}
+
+// finalize seals queued frames before waiting for the in-flight request. The
+// final caller receives delivery errors instead of a timer's early nil result.
+func (t *telegramEditThrottler) finalize(ctx context.Context, h *telegramPreviewHandle, do func() error) error {
+	if t == nil {
+		return do()
+	}
+	key := telegramEditKey(h)
+	t.mu.Lock()
+	st := t.msgs[key]
+	if st != nil {
+		st.sealed = true
+		st.pendHTML, st.pendRaw = "", ""
+		if st.timer != nil {
+			st.timer.Stop()
+			st.timer = nil
+		}
+	}
+	var idle <-chan struct{}
+	if st != nil && st.busy {
+		idle = st.idle
+	}
+	t.mu.Unlock()
+	defer t.drop(h)
+	if idle != nil {
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return do()
 }
 
 // ensureTimerLocked starts the trailing timer if none is active.

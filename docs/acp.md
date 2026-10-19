@@ -42,6 +42,28 @@ conversation or erase the saved UUID, including relay sessions. The adapter
 uses advertised `session/close` support to flush native state before stopping
 its subprocess; close is idempotent.
 
+## Native history and conversation switching
+
+`/history` reads the backend's conversation history even when the bridge only
+observed a few recent turns. ACP replay is captured from protocol-labelled
+`user_message_chunk` / `agent_message_chunk` updates; thoughts, plans, tool output
+and usage do not become history entries or new bot replies. Chunk boundaries
+are joined within messages, and tool/turn boundaries remain separate. ACP does
+not guarantee historical timestamps; missing timestamps display as `—`.
+
+An open UUID is inspected through its existing in-memory replay/live cache, not
+by opening another writer. An idle UUID is inspected through an explicit,
+metadata-only `session/load` in an isolated subprocess, followed by close. This
+never prompts a model, creates a replacement conversation, changes model/effort,
+or parses a provider-specific session-file format. Load errors remain visible
+instead of silently reporting empty history. Do not open the same UUID through
+another frontend while inspecting it.
+
+Both `/switch` and card-button switching retain the existing bridge record and
+native UUID. Switching back does not clear history. History inspection does not
+switch the active conversation. The bridge's own records remain available for
+agents without a backend history capability.
+
 ## OMP 18.8.6
 
 Use the official CLI with `cmd = "omp"`, `args = ["acp"]`,

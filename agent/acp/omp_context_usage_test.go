@@ -134,9 +134,19 @@ func TestOMPContextUsage_NativeACPAndResume(t *testing.T) {
 	if second.CurrentSessionID() != id || len(second.events) != 0 {
 		t.Fatal("resume changed identity or replayed historical events")
 	}
+	history := second.history.snapshot(0)
+	if len(history) != 2 || history[0].Role != "user" || history[0].Content != "Run the local context fixture." || history[1].Content != "CONTEXT_USAGE_OK" {
+		t.Fatalf("official OMP replay history missing or polluted: %+v", history)
+	}
 	run(second, 200, 200, 30)
 	if requests.Load() != 3 {
 		t.Fatalf("unexpected resumed model requests: %d", requests.Load())
 	}
-	t.Logf("official OMP context usage passed: UUID preserved, current=200/1000000, resumed turn=200+30, requests=%d", requests.Load())
+	if err := second.Close(); err != nil { t.Fatal(err) }
+	agent := &Agent{cmd: cfg.command, args: cfg.args, extraEnv: cfg.extraEnv, workDir: cfg.workDir, authMethod: cfg.authMethod}
+	nativeHistory, err := agent.GetSessionHistory(ctx, id, 0)
+	if err != nil || len(nativeHistory) != 4 || requests.Load() != 3 {
+		t.Fatalf("native history probe lost turns or triggered inference: entries=%+v err=%v requests=%d", nativeHistory, err, requests.Load())
+	}
+	t.Logf("official OMP context/history passed: UUID preserved, metadata-only history=4 entries, current=200/1000000, resumed turn=200+30, requests=%d", requests.Load())
 }

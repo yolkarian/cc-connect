@@ -181,6 +181,7 @@ const (
 	MsgToolAllowFailed           MsgKey = "tool_allow_failed"
 	MsgToolAllowedNew            MsgKey = "tool_allowed_new"
 	MsgError                     MsgKey = "error"
+	MsgReplyDeliveryIncomplete MsgKey = "reply_delivery_incomplete"
 	MsgSessionNotFound           MsgKey = "session_not_found"
 	MsgFailedToStartAgentSession MsgKey = "failed_to_start_agent_session"
 	MsgFailedToDeleteSession     MsgKey = "failed_to_delete_session"
@@ -1444,6 +1445,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "❌ 取得會話列表失敗: %v",
 		LangJapanese:           "❌ セッション一覧の取得に失敗しました: %v",
 		LangSpanish:            "❌ Error al listar sesiones: %v",
+	},
+	MsgReplyDeliveryIncomplete: {
+		LangEnglish: "The answer was generated, but delivery did not complete. History is saved; use /history to inspect it. The task has not been restarted.",
+		LangChinese: "回答已生成，但发送未完成。历史已保存，可用 /history 查看；任务没有被重新执行。",
+		LangTraditionalChinese: "回答已產生，但傳送未完成。歷史已儲存，可用 /history 查看；任務沒有被重新執行。",
+		LangJapanese: "回答は生成されましたが、配信が完了しませんでした。履歴は保存されています。/history で確認できます。タスクは再実行していません。",
+		LangSpanish: "La respuesta se generó, pero su entrega no se completó. El historial está guardado; consulta /history. La tarea no se ha reiniciado.",
 	},
 	MsgHistoryEmpty: {
 		LangEnglish:            "No history in current session.",

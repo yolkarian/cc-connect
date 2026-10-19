@@ -316,6 +316,25 @@ one heading icon, not a thinking emoji before each line. Tool calls remain
 individually counted and status-marked. `thinking_max_len` caps the accumulated
 reasoning preview rather than independently treating each token as a step.
 
+### Long answers and final delivery
+
+Replies are split before sending, using the decoded text's UTF-16 length and
+Telegram's 4096-unit limit. HTML entities, Unicode emoji, nested formatting,
+code blocks and expandable folds remain valid in every fragment. Reply targets,
+forum topics and first-fragment buttons are preserved. HTML rejection retries
+only that explicitly rejected fragment as decoded plain text; transport failures
+do not replay an uncertain or partially accepted long response. Explicit 429
+rejections honor `retry_after` with cancellable, bounded retries of only the
+rejected fragment; accepted fragments are not sent again.
+
+Completion is synchronous, unlike coalesced progress edits. It cancels queued
+preview frames, waits for the in-flight edit, updates the original message with
+the first final fragment, then sends continuations in order. A late progress
+frame cannot overwrite the final answer. Delivery failure is reported rather
+than being mistaken for successful timer scheduling; rich-card failures show a
+short `/history` recovery notice when the platform is reachable. The generated
+answer is persisted before delivery and is not regenerated to retry a send.
+
 ## Architecture
 
 ```

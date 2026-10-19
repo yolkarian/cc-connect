@@ -5775,7 +5775,13 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 							slog.Debug("rich card: final streaming flush failed (proceeding to full Patch)", "platform", p.Name(), "error", err)
 						}
 					}
-					if updater, ok := p.(MessageUpdater); ok {
+					if finalizer, ok := p.(MessageFinalizer); ok {
+						if err := finalizer.FinalizeMessage(e.ctx, cardMessageID, finalCard); err != nil {
+							slog.Error("failed to finalize rich card reply (not replaying partial delivery)", "error", err)
+							e.reply(p, replyCtx, e.i18n.T(MsgReplyDeliveryIncomplete))
+							return
+						}
+					} else if updater, ok := p.(MessageUpdater); ok {
 						if err := updater.UpdateMessage(e.ctx, cardMessageID, finalCard); err != nil {
 							slog.Debug("rich card: final update failed, falling back to send", "platform", p.Name(), "error", err)
 							if err := p.Send(e.ctx, replyCtx, finalCard); err != nil {
@@ -9117,14 +9123,10 @@ func (e *Engine) cmdHistory(p Platform, msg *Message, args []string) {
 		n = v
 	}
 
-	entries := s.GetHistory(n)
-	agentSID := s.GetAgentSessionID()
-	if len(entries) == 0 && agentSID != "" {
-		if hp, ok := agent.(HistoryProvider); ok {
-			if agentEntries, err := hp.GetSessionHistory(e.ctx, agentSID, n); err == nil {
-				entries = agentEntries
-			}
-		}
+	entries, err := e.sessionHistory(agent, s, n)
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgError, err))
+		return
 	}
 
 	if len(entries) == 0 {
@@ -9141,9 +9143,33 @@ func (e *Engine) cmdHistory(p Platform, msg *Message, args []string) {
 			icon = "🤖"
 		}
 		content := truncateHistoryEntry(h.Content, maxLen)
-		sb.WriteString(fmt.Sprintf("%s [%s]\n%s\n\n", icon, h.Timestamp.Format("15:04:05"), content))
+		sb.WriteString(fmt.Sprintf("%s [%s]\n%s\n\n", icon, historyEntryTime(h.Timestamp), content))
 	}
 	e.reply(p, msg.ReplyCtx, sb.String())
+}
+
+// Prefer backend history when available: the bridge may contain only turns
+// observed since connection, or a just-selected native session may have none.
+func (e *Engine) sessionHistory(agent Agent, session *Session, limit int) ([]HistoryEntry, error) {
+	if id := session.GetAgentSessionID(); id != "" {
+		if provider, ok := agent.(HistoryProvider); ok {
+			entries, err := provider.GetSessionHistory(e.ctx, id, limit)
+			if err != nil {
+				return nil, err
+			}
+			if entries != nil {
+				return entries, nil
+			}
+		}
+	}
+	return session.GetHistory(limit), nil
+}
+
+func historyEntryTime(timestamp time.Time) string {
+	if timestamp.IsZero() {
+		return "—"
+	}
+	return timestamp.Format("15:04:05")
 }
 
 func (e *Engine) historyEntryMaxLen() int {
@@ -12313,8 +12339,7 @@ func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
 			return
 		}
 		e.cleanupInteractiveState(interactiveKey)
-		session := sessions.SwitchToAgentSession(sessionKey, matched.ID, agent.Name(), matched.Summary)
-		session.ClearHistory()
+		sessions.SwitchToAgentSession(sessionKey, matched.ID, agent.Name(), matched.Summary)
 
 	case "/dir":
 		fields := strings.Fields(args)
@@ -13285,15 +13310,9 @@ func (e *Engine) renderCurrentCard(sessionKey string) *Card {
 func (e *Engine) renderHistoryCard(sessionKey string) *Card {
 	agent, sessions := e.sessionContextForKey(sessionKey)
 	s := sessions.GetOrCreateActive(sessionKey)
-	entries := s.GetHistory(10)
-
-	agentSID := s.GetAgentSessionID()
-	if len(entries) == 0 && agentSID != "" {
-		if hp, ok := agent.(HistoryProvider); ok {
-			if agentEntries, err := hp.GetSessionHistory(e.ctx, agentSID, 10); err == nil {
-				entries = agentEntries
-			}
-		}
+	entries, err := e.sessionHistory(agent, s, 10)
+	if err != nil {
+		return e.simpleCard(e.i18n.T(MsgCardTitleHistory), "red", e.i18n.Tf(MsgError, err))
 	}
 
 	if len(entries) == 0 {
@@ -13308,7 +13327,7 @@ func (e *Engine) renderHistoryCard(sessionKey string) *Card {
 			icon = "🤖"
 		}
 		content := truncateHistoryEntry(h.Content, maxLen)
-		sb.WriteString(fmt.Sprintf("%s [%s]\n%s\n\n", icon, h.Timestamp.Format("15:04:05"), content))
+		sb.WriteString(fmt.Sprintf("%s [%s]\n%s\n\n", icon, historyEntryTime(h.Timestamp), content))
 	}
 
 	return NewCard().

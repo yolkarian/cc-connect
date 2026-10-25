@@ -6426,7 +6426,7 @@ func TestRenderListCard_MakesEveryVisibleSessionClickable(t *testing.T) {
 		t.Fatalf("switch action count = %d, want %d", got, len(sessions))
 	}
 
-	btn, ok := findCardAction(card, "act:/switch 6")
+	btn, ok := findCardAction(card, "act:/switch "+sessionChoiceToken(sessions[5].ID))
 	if !ok {
 		t.Fatal("expected active session switch action to exist")
 	}
@@ -12812,22 +12812,19 @@ func (a *switchableAgent) ListSessions(_ context.Context) ([]AgentSessionInfo, e
 	return a.sessions, nil
 }
 
-func TestCmdSwitch_NoArgs_ShowsUsage(t *testing.T) {
+func TestCmdSwitch_NoArgs_ShowsPickerWithoutChangingSession(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
-	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
-
+	agent := &stubListAgent{sessions: []AgentSessionInfo{{ID: "original-id", Summary: "original conversation", MessageCount: 2}}}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	defer e.Stop()
 	msg := &Message{SessionKey: "test:ch:user1", Content: "/switch", ReplyCtx: "ctx"}
-	e.handleCommand(p, msg, msg.Content)
-
-	sent := p.getSent()
-	foundUsage := false
-	for _, s := range sent {
-		if strings.Contains(s, "Usage") || strings.Contains(s, "/switch") {
-			foundUsage = true
-		}
+	active := e.sessions.GetOrCreateActive(msg.SessionKey)
+	e.ReceiveMessage(p, msg)
+	if !strings.Contains(strings.Join(p.getSent(), "\n"), "original conversation") {
+		t.Fatalf("expected session picker, got %v", p.getSent())
 	}
-	if !foundUsage {
-		t.Fatalf("expected usage reply, got %v", sent)
+	if e.sessions.GetOrCreateActive(msg.SessionKey).ID != active.ID || active.GetAgentSessionID() != "" {
+		t.Fatal("opening the picker changed the active conversation")
 	}
 }
 

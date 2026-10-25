@@ -381,6 +381,7 @@ func (env *cujEnv) activeSession(sessionKey string) *Session {
 // ===========================================================================
 
 func TestCUJ_B3_SwitchPreservesHistoryEndToEnd(t *testing.T) {
+	t.Run("NewThenResume", runNewSessionResumeJourney)
 	t.Run("CardButtonRoundTrip", TestCardSwitch_PreservesHistoryOnBothRoundTripLegs)
 	t.Run("NativeHistory", TestHistory_PrefersNativeOverPartialBridgeAndSurfacesErrors)
 	env := newCUJEnv(t)

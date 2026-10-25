@@ -65,10 +65,22 @@ or parses a provider-specific session-file format. Load errors remain visible
 instead of silently reporting empty history. Do not open the same UUID through
 another frontend while inspecting it.
 
-Both `/switch` and card-button switching retain the existing bridge record and
-native UUID. Switching back does not clear history. History inspection does not
-switch the active conversation. The bridge's own records remain available for
-agents without a backend history capability.
+`/new` creates an independent active conversation without clearing the previous
+conversation's UUID, bridge history or provider selection. Both `/switch` and
+card-button switching retain the existing bridge record and native UUID.
+Switching back does not clear history, including after a bridge restart.
+
+Use `/list` or bare `/switch` to open the session picker. Platforms with inline
+buttons can resume directly from either command; text-only platforms still
+accept `/switch <number | id_prefix | name>`. Picker actions bind to a compact
+hash of the native UUID, not its mutable list position, so a changed native
+sort order cannot select another conversation. A removed or filtered-out target
+returns no match rather than selecting a replacement. Listing does not load
+sessions, prompt a model or change the active conversation; the selected UUID is
+loaded on the next turn or model-control request and retains its saved choices.
+
+History inspection does not switch the active conversation. The bridge's own
+records remain available for agents without a backend history capability.
 
 ## Session-list counts and titles
 

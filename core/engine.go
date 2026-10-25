@@ -7405,12 +7405,8 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 	e.cleanupInteractiveState(interactiveKey)
 	slog.Info("cmdNew: cleanup done, creating new session", "session_key", msg.SessionKey)
 
-	// Clear old session's agent session ID so it cannot be resumed
-	old := sessions.GetOrCreateActive(msg.SessionKey)
-	old.SetAgentSessionID("", "")
-	old.ClearHistory()
-	sessions.Save()
-
+	// A new active row must not mutate the previous conversation. Keep its
+	// UUID, history and provider selection available for explicit resume.
 	name := ""
 	if len(args) > 0 {
 		name = strings.Join(args, " ")
@@ -7481,6 +7477,14 @@ func filterOwnedSessions(sessions []AgentSessionInfo, known map[string]struct{})
 
 const listPageSize = 20
 
+// sessionChoiceToken binds a picker action to an opaque native ID rather than
+// its mutable list position. Keep cmd:/switch callbacks within Telegram's
+// 64-byte limit even when a backend uses long session IDs.
+func sessionChoiceToken(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("sid:%x", sum[:16])
+}
+
 func sessionMessageCount(count int) string {
 	if count < 0 {
 		return "—"
@@ -7533,6 +7537,7 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 		activeSession := sessions.GetOrCreateActive(msg.SessionKey)
 		activeAgentID := activeSession.GetAgentSessionID()
 
+		var buttons [][]ButtonOption
 		var sb strings.Builder
 		if totalPages > 1 {
 			sb.WriteString(fmt.Sprintf(e.i18n.T(MsgListTitlePaged), agentName, total, page, totalPages))
@@ -7559,12 +7564,27 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 				}
 			}
 			sb.WriteString(e.i18n.Tf(MsgListItem, marker, i+1, displayName, sessionMessageCount(s.MessageCount), s.ModifiedAt.Format("01-02 15:04")) + "\n")
+			buttons = append(buttons, []ButtonOption{{
+				Text: fmt.Sprintf("%s #%d %s", marker, i+1, displayName),
+				Data: "cmd:/switch " + sessionChoiceToken(s.ID),
+			}})
 		}
 		if totalPages > 1 {
 			sb.WriteString(fmt.Sprintf(e.i18n.T(MsgListPageHint), page, totalPages))
 		}
 		sb.WriteString(e.i18n.T(MsgListSwitchHint))
-		e.reply(p, msg.ReplyCtx, sb.String())
+		if sender, ok := p.(InlineButtonSender); ok {
+			if err := e.waitOutgoing(p); err != nil {
+				slog.Warn("session list delivery cancelled", "error", err)
+				return
+			}
+			// Do not resend as plain text after an uncertain transport outcome.
+			if err := sender.SendWithButtons(e.ctx, msg.ReplyCtx, sb.String(), buttons); err != nil {
+				slog.Error("session list delivery failed", "error", err)
+			}
+		} else {
+			e.reply(p, msg.ReplyCtx, sb.String())
+		}
 		return
 	}
 
@@ -7584,7 +7604,7 @@ func (e *Engine) cmdList(p Platform, msg *Message, args []string) {
 
 func (e *Engine) cmdSwitch(p Platform, msg *Message, args []string) {
 	if len(args) == 0 {
-		e.reply(p, msg.ReplyCtx, "Usage: /switch <number | id_prefix | name>")
+		e.cmdList(p, msg, nil)
 		return
 	}
 	query := strings.TrimSpace(strings.Join(args, " "))
@@ -7641,6 +7661,21 @@ func (e *Engine) cmdSwitch(p Platform, msg *Message, args []string) {
 func (e *Engine) matchSession(sessions []AgentSessionInfo, manager *SessionManager, query string) *AgentSessionInfo {
 	if len(sessions) == 0 {
 		return nil
+	}
+
+	// Picker tokens resolve only against this conversation's filtered native
+	// catalog. A removed target must not match another session's name/summary.
+	if strings.HasPrefix(query, "sid:") {
+		var matched *AgentSessionInfo
+		for i := range sessions {
+			if sessionChoiceToken(sessions[i].ID) == query {
+				if matched != nil && matched.ID != sessions[i].ID {
+					return nil
+				}
+				matched = &sessions[i]
+			}
+		}
+		return matched
 	}
 
 	// 1. Numeric index
@@ -13789,7 +13824,7 @@ func (e *Engine) renderListCard(sessionKey string, page int) (*Card, error) {
 			e.i18n.Tf(MsgListItem, marker, i+1, displayName, sessionMessageCount(s.MessageCount), s.ModifiedAt.Format("01-02 15:04")),
 			fmt.Sprintf("#%d", i+1),
 			btnType,
-			fmt.Sprintf("act:/switch %d", i+1),
+			"act:/switch "+sessionChoiceToken(s.ID),
 		)
 	}
 

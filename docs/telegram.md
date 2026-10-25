@@ -283,6 +283,21 @@ cc-connect: Here's the project structure...
 
 ---
 
+## Starting and resuming conversations
+
+`/new` starts a separate empty conversation; it does not erase the previous
+conversation's UUID or history. Use `/list` or `/switch` without arguments to
+open the session picker, then tap the desired row to resume it. You can also
+send `/switch <number | id_prefix | name>` directly.
+
+Picker callbacks use a compact identity derived from the native session ID,
+not the displayed row number. They remain bound to that conversation if the
+backend list is reordered, and stay within Telegram's 64-byte callback limit
+for long opaque IDs. A removed or inaccessible target is not replaced by a
+different conversation. Opening a picker does not prompt the agent or change
+the active conversation. Native ACP loads the selected UUID on the next turn
+or model-control request, preserving its saved model, effort and history.
+
 ## Streaming cards
 
 Enable the Feishu-style rich-card layout in the global display settings:

@@ -31,6 +31,12 @@ func (h *acpHistory) bind(id string) {
 	}
 }
 
+func (h *acpHistory) boundSessionID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sessionID
+}
+
 func (h *acpHistory) beginPrompt(prompt string) {
 	h.boundary()
 	h.append("user", prompt)
@@ -135,6 +141,13 @@ func (h *acpHistory) snapshot(limit int) []core.HistoryEntry {
 	return out
 }
 
+func (s *acpSession) cachedHistory(limit int) ([]core.HistoryEntry, error) {
+	if !s.historyComplete {
+		return nil, fmt.Errorf("acp: session/resume does not replay prior history; session/load is required for complete history")
+	}
+	return s.history.snapshot(limit), nil
+}
+
 // GetSessionHistory uses the live session's replay/cache if it owns this UUID.
 // Otherwise a metadata-only explicit load collects replay, then closes. The
 // per-agent lifecycle lock prevents a concurrent load/start of the same UUID;
@@ -146,7 +159,7 @@ func (a *Agent) GetSessionHistory(ctx context.Context, id string, limit int) ([]
 	a.sessionsMu.Lock()
 	defer a.sessionsMu.Unlock()
 	if live := a.liveSessions[id]; live != nil && live.Alive() {
-		return live.history.snapshot(limit), nil
+		return live.cachedHistory(limit)
 	}
 	a.mu.RLock()
 	cfg := acpSessionConfig{
@@ -162,5 +175,5 @@ func (a *Agent) GetSessionHistory(ctx context.Context, id string, limit int) ([]
 		return nil, fmt.Errorf("acp: read session history: %w", err)
 	}
 	defer session.Close()
-	return session.history.snapshot(limit), nil
+	return session.cachedHistory(limit)
 }

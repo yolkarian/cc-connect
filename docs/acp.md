@@ -46,7 +46,17 @@ Confirm the old process has exited and restart the bridge before retrying, or
 explicitly choose `/new` to start an independent conversation. A failed teardown
 for one known UUID does not block another UUID in the same chat. The adapter
 uses advertised `session/close` support to flush native state before stopping
-its subprocess; close is idempotent.
+its subprocess; close is idempotent. Native history probes obey the same
+UUID-scoped teardown guard, including text and card `/history` requests.
+
+The adapter prefers advertised `session/load`, which replays authoritative
+history. A backend that only advertises `sessionCapabilities.resume` is restored
+through `session/resume`; ACP defines this as reconnecting **without history
+replay**, not as an alternative history-loading request. Neither method is
+retried through another lifecycle method after failure. Unsupported restore,
+malformed state, or a response identifying another UUID is an actionable error,
+never permission to call `session/new`. Optional capability objects must be
+non-null objects; null/boolean values do not advertise support.
 
 ## Native history and conversation switching
 
@@ -58,12 +68,15 @@ are joined within messages, and tool/turn boundaries remain separate. ACP does
 not guarantee historical timestamps; missing timestamps display as `—`.
 
 An open UUID is inspected through its existing in-memory replay/live cache, not
-by opening another writer. An idle UUID is inspected through an explicit,
-metadata-only `session/load` in an isolated subprocess, followed by close. This
-never prompts a model, creates a replacement conversation, changes model/effort,
-or parses a provider-specific session-file format. Load errors remain visible
-instead of silently reporting empty history. Do not open the same UUID through
-another frontend while inspecting it.
+by opening another writer. A resume-only backend cannot claim that its partial
+live cache is complete history; `/history` reports the missing `session/load`
+capability instead of fabricating an empty or partial native transcript.
+For an idle UUID, an isolated subprocess performs explicit restoration and then
+closes: `session/load` supplies replay; a resume-only backend still returns the
+explicit missing-history error. This never prompts a model, creates a replacement
+conversation, changes model/effort, or parses a provider-specific session-file
+format. Restoration errors remain visible instead of silently reporting empty
+history. Do not open the same UUID through another frontend while inspecting it.
 
 `/new` creates an independent active conversation without clearing the previous
 conversation's UUID, bridge history or provider selection. Both `/switch` and
@@ -81,6 +94,22 @@ loaded on the next turn or model-control request and retains its saved choices.
 
 History inspection does not switch the active conversation. The bridge's own
 records remain available for agents without a backend history capability.
+
+## Background notifications and session boundaries
+
+Out-of-turn `agent_message_chunk` updates get an explicitly synthetic result so
+that the idle event reader can deliver background output without another user
+prompt. Foreground chunks still finish only at the prompt RPC response. Replay
+before a load response emits neither answers nor synthetic completions; thoughts,
+tools and usage never become background answers. Notifications labelled with
+another session ID are ignored before modifying history, mode/config/usage,
+tool caches or the completion stream.
+
+Background answers and partial output flushed on cancellation/error are saved
+before any transport attempt. A failed turn on a still-live backend does not
+discard later background notifications. Unknown send outcomes are not retried
+or regenerated. The text remains saved; `/history` can recover it when the
+backend provides history (as OMP does through `session/load`).
 
 ## Session-list counts and titles
 
@@ -119,7 +148,8 @@ Use the official CLI with `cmd = "omp"`, `args = ["acp"]`,
 `auth_method = "agent"`, and ACP `mode = "default"`. Tool approval remains a
 separate native setting (`tools.approvalMode: yolo`). Optional ACP constructor
 defaults are `model` and `reasoning_effort`, applied **only to session/new**.
-They are never reapplied to session/load or changed by conversation pickers.
+They are never reapplied to session/load/session/resume or changed by
+conversation pickers.
 Omit them to let native `modelRoles.default` own new-conversation defaults.
 For workspace-specific future defaults use native `.omp/config.yml`, not a
 bridge preference store. Role/default controls remain separate operations.

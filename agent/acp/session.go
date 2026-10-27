@@ -45,6 +45,8 @@ type acpSession struct {
 
 	toolInputMu   sync.Mutex
 	toolInputByID map[string]string // toolCallId -> summarized tool input
+	toolNameMu    sync.Mutex
+	toolNameByID  map[toolCallKey]string
 
 	// modesMu guards availableModes and currentMode. Both fields are
 	// populated on handshake (session/new or session/load response) and
@@ -56,6 +58,16 @@ type acpSession struct {
 	config         acpConfigCache
 	usage          acpContextUsageCache
 	history        acpHistory
+	// Immutable after handshake: session/resume cannot provide earlier history.
+	historyComplete bool
+
+	// promptInFlight tracks active session/prompt RPCs. Text chunks that
+	// arrive while no prompt is in flight belong to background work (kimi
+	// acp runs /compact asynchronously and reports "Compaction completed"
+	// long after the /compact prompt's turn has ended) — they get a
+	// synthetic EventResult so the engine's unsolicited reader relays them
+	// to the platform instead of buffering them until the next turn.
+	promptInFlight atomic.Int32
 
 	callbacks sessionCallbacks // may be nil (tests, integration harness)
 }
@@ -186,8 +198,8 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 	return s, nil
 }
 
-// handshake runs initialize → optional authenticate → session/load or
-// session/new, and caches any modes the server advertises so
+// handshake runs initialize → optional authenticate → session/load,
+// session/resume or session/new, and caches any modes the server advertises so
 // SetLiveMode / PermissionModes can answer correctly.
 func (s *acpSession) handshake(resumeSessionID string, authMethod string) error {
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
@@ -215,12 +227,13 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 	if err := json.Unmarshal(res, &initOut); err != nil {
 		return fmt.Errorf("acp: parse initialize result: %w", err)
 	}
-	listSupported := len(initOut.AgentCapabilities.SessionCapabilities.List) > 0
-	closeCapability := initOut.AgentCapabilities.SessionCapabilities.Close
-	s.closeSupported = len(closeCapability) > 0 && !bytes.Equal(bytes.TrimSpace(closeCapability), []byte("null"))
+	listSupported := hasACPCapability(initOut.AgentCapabilities.SessionCapabilities.List)
+	s.closeSupported = hasACPCapability(initOut.AgentCapabilities.SessionCapabilities.Close)
+	resumeSupported := hasACPCapability(initOut.AgentCapabilities.SessionCapabilities.Resume)
 	slog.Debug("acp: initialized",
 		"protocol", initOut.ProtocolVersion,
 		"load_session", initOut.AgentCapabilities.LoadSession,
+		"resume_session", resumeSupported,
 		"list_sessions", listSupported,
 	)
 	if s.callbacks != nil {
@@ -238,30 +251,45 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 
 	wantResume := resumeSessionID != "" && resumeSessionID != core.ContinueSession
 	if wantResume {
+		// Load is preferred because it replays authoritative history. Resume
+		// is a separate capability for servers that cannot replay history;
+		// it is not a retry path after a failed load.
+		method := "session/load"
 		if !initOut.AgentCapabilities.LoadSession {
-			return fmt.Errorf("acp: server does not support session/load")
+			if !resumeSupported {
+				return fmt.Errorf("acp: server does not support session/load or session/resume")
+			}
+			method = "session/resume"
 		}
-		loadParams := map[string]any{
+		s.history.bind(resumeSessionID)
+		result, err := s.tr.call(ctx, method, map[string]any{
 			"sessionId":  resumeSessionID,
 			"cwd":        s.workDir,
 			"mcpServers": []any{},
-		}
-		loadRes, err := s.tr.call(ctx, "session/load", loadParams)
+		})
 		if err != nil {
-			return fmt.Errorf("acp: session/load: %w", err)
+			return fmt.Errorf("acp: %s: %w", method, err)
 		}
-		var lr struct {
+		var restored *struct {
+			SessionID     string            `json:"sessionId"`
 			Modes         *acpModesBlock    `json:"modes"`
 			ConfigOptions []acpConfigOption `json:"configOptions"`
 		}
-		if err := json.Unmarshal(loadRes, &lr); err != nil {
-			return fmt.Errorf("acp: parse session/load: %w", err)
+		if err := json.Unmarshal(result, &restored); err != nil {
+			return fmt.Errorf("acp: parse %s: %w", method, err)
 		}
-		// ACP LoadSessionResponse does not contain sessionId. A successful
-		// load keeps the requested ID; only session/new allocates an ID.
+		if restored == nil {
+			return fmt.Errorf("acp: invalid %s response: expected a session state object", method)
+		}
+		if restored.SessionID != "" && restored.SessionID != resumeSessionID {
+			return fmt.Errorf("acp: %s returned session %q, requested %q", method, restored.SessionID, resumeSessionID)
+		}
+		// Only session/new allocates identity. Neither restore method may
+		// silently replace the requested UUID, even if a vendor echoes one.
 		s.setACPSessionID(resumeSessionID)
-		s.absorbModes(lr.Modes)
-		s.absorbConfigOptions(lr.ConfigOptions)
+		s.absorbModes(restored.Modes)
+		s.absorbConfigOptions(restored.ConfigOptions)
+		s.historyComplete = method == "session/load"
 		return nil
 	}
 
@@ -287,6 +315,7 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 	s.setACPSessionID(sn.SessionID)
 	s.absorbModes(sn.Modes)
 	s.absorbConfigOptions(sn.ConfigOptions)
+	s.historyComplete = true
 	return nil
 }
 
@@ -411,6 +440,21 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 		slog.Debug("acp: notification", "method", method)
 		return
 	}
+	var notification struct {
+		SessionID string `json:"sessionId"`
+	}
+	if json.Unmarshal(params, &notification) != nil {
+		return
+	}
+	expectedID := s.currentACPSessionID()
+	if expectedID == "" {
+		expectedID = s.history.boundSessionID()
+	}
+	// Multiplexed or child-session updates cannot mutate this session's
+	// history, metadata, tool cache, or synthetic turn-completion stream.
+	if notification.SessionID != "" && expectedID != "" && notification.SessionID != expectedID {
+		return
+	}
 	s.history.absorb(params)
 	s.maybeAbsorbCurrentModeUpdate(params)
 	// Usage is metadata, including when sent before a load response. Keep it
@@ -426,10 +470,27 @@ func (s *acpSession) onNotification(method string, params json.RawMessage) {
 	}
 	s.maybeAbsorbConfigOptionUpdate(params)
 	s.cacheToolCallInput(params)
+	toolName := s.resolveToolCallName(params)
 	// Debug log to capture raw session/update JSON for troubleshooting vendor compatibility
 	slog.Debug("acp: session/update", "session_id", sid, "params", string(params))
+	hasVisible := false
 	for _, ev := range mapSessionUpdate(sid, params) {
+		if ev.Type == core.EventToolResult && toolName != "" {
+			ev.ToolName = toolName
+		}
+		if ev.Type == core.EventText && ev.Content != "" {
+			hasVisible = true
+		}
 		s.emit(ev)
+	}
+	// Out-of-turn text (background work reporting after its turn ended —
+	// e.g. kimi acp's "Compaction completed" chunk) would otherwise sit in
+	// the events buffer until the next foreground turn drains and drops it
+	// as stale. Close it with a synthetic result so the unsolicited reader
+	// relays it immediately.
+	if hasVisible && s.promptInFlight.Load() == 0 {
+		s.history.boundary()
+		s.emit(core.Event{Type: core.EventResult, SessionID: sid, Done: true, Synthetic: true})
 	}
 }
 
@@ -673,8 +734,10 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 	s.history.beginPrompt(prompt)
 	defer s.history.boundary()
 	slog.Debug("acp: sending session/prompt", "session_id", sid, "prompt_len", len(prompt))
+	s.promptInFlight.Add(1)
 	res, err := s.tr.call(s.ctx, "session/prompt", params)
 	if err != nil {
+		s.promptInFlight.Add(-1)
 		s.emit(core.Event{Type: core.EventError, Error: err})
 		return fmt.Errorf("acp: session/prompt: %w", err)
 	}
@@ -684,11 +747,15 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 	// final footer. These are turn totals, not the current context footprint.
 	s.absorbPromptUsage(sid, res)
 	// Text was streamed via session/update; engine aggregates EventText.
+	// Keep the in-flight mark until after EventResult is queued so a text
+	// chunk racing in from the read loop is not mistaken for out-of-turn
+	// background output.
 	s.emit(core.Event{
 		Type:      core.EventResult,
 		SessionID: sid,
 		Done:      true,
 	})
+	s.promptInFlight.Add(-1)
 	return nil
 }
 

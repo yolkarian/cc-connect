@@ -340,7 +340,11 @@ forum topics and first-fragment buttons are preserved. HTML rejection retries
 only that explicitly rejected fragment as decoded plain text; transport failures
 do not replay an uncertain or partially accepted long response. Explicit 429
 rejections honor `retry_after` with cancellable, bounded retries of only the
-rejected fragment; accepted fragments are not sent again.
+rejected fragment; accepted fragments are not sent again. Sends and edits share
+one retry policy with at most three total attempts per request, accepting only
+`retry_after` values from 0 through 120 seconds and honoring cancellation before
+another write. Streaming edits, previews and command buttons use the same
+policy; uploads with consumable readers are not replayed.
 
 Completion is synchronous, unlike coalesced progress edits. It cancels queued
 preview frames, waits for the in-flight edit, updates the original message with

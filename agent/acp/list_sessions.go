@@ -45,11 +45,19 @@ type acpInitializeResult struct {
 		LoadSession         bool `json:"loadSession"`
 		SessionCapabilities struct {
 			// ACP advertises capabilities as objects (possibly empty);
-			// treat "field present" as "supported" regardless of contents.
-			List  json.RawMessage `json:"list,omitempty"`
-			Close json.RawMessage `json:"close,omitempty"`
+			// only a non-null object advertises the corresponding method.
+			List   json.RawMessage `json:"list,omitempty"`
+			Close  json.RawMessage `json:"close,omitempty"`
+			Resume json.RawMessage `json:"resume,omitempty"`
 		} `json:"sessionCapabilities"`
 	} `json:"agentCapabilities"`
+}
+
+// ACP optional capabilities are objects, including an empty object. Null,
+// booleans and malformed values do not advertise a supported method.
+func hasACPCapability(raw json.RawMessage) bool {
+	var capability map[string]json.RawMessage
+	return json.Unmarshal(raw, &capability) == nil && capability != nil
 }
 
 // acpSessionListResult mirrors a `session/list` response.
@@ -212,7 +220,7 @@ func (a *Agent) ListSessions(ctx context.Context) ([]core.AgentSessionInfo, erro
 		}
 		return nil, err
 	}
-	if len(init.AgentCapabilities.SessionCapabilities.List) == 0 {
+	if !hasACPCapability(init.AgentCapabilities.SessionCapabilities.List) {
 		slog.Info("acp: session/list unsupported by agent, caching for fast-path", "command", a.cmd)
 		a.listUnsupported.Store(true)
 		return nil, nil

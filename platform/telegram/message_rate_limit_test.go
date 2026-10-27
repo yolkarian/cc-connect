@@ -4,38 +4,51 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	tgbot "github.com/go-telegram/bot"
+	"time"
 )
 
-func TestTelegramLongAnswer_RetriesOnlyExplicitRateRejection(t *testing.T) {
-	attempts := 0
-	err := telegramRetryRejected(context.Background(), func() error {
-		attempts++
-		if attempts == 1 {
-			return &tgbot.TooManyRequestsError{Message: "rate limited", RetryAfter: 0}
-		}
-		return nil
-	})
-	if err != nil || attempts != 2 {
-		t.Fatalf("rate rejection was not retried: %v attempts=%d", err, attempts)
+func TestTelegramOutbound_RateLimitBudgetIsNotMultiplied(t *testing.T) {
+	for _, operation := range []string{"send", "finalize"} {
+		t.Run(operation, func(t *testing.T) {
+			recordSleeps(t)
+			inner := &rateLimitedBot{stubTelegramBot: newStubTelegramBot(), failures: 100, retryAfter: 0}
+			p := &Platform{bot: newRateLimitRetryBot(inner), edits: newTelegramEditThrottler(time.Millisecond)}
+			var err error
+			if operation == "send" {
+				err = p.Send(context.Background(), replyContext{chatID: 42}, "final reply")
+			} else {
+				err = p.FinalizeMessage(context.Background(), &telegramPreviewHandle{chatID: 42, messageID: 7}, "final reply")
+			}
+			if err == nil || inner.calls != 3 {
+				t.Fatalf("%s made %d calls, want exactly 3 bounded attempts; err=%v", operation, inner.calls, err)
+			}
+		})
 	}
-	attempts = 0
-	unknown := errors.New("timeout awaiting response: acceptance unknown")
-	err = telegramRetryRejected(context.Background(), func() error { attempts++; return unknown })
-	if err != unknown || attempts != 1 {
-		t.Fatal("uncertain write was replayed")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	attempts = 0
-	err = telegramRetryRejected(ctx, func() error { attempts++; return &tgbot.TooManyRequestsError{Message: "rate limited", RetryAfter: 60} })
-	if !errors.Is(err, context.Canceled) || attempts != 1 {
-		t.Fatal("rate-limit wait ignored cancellation")
-	}
-	attempts = 0
-	err = telegramRetryRejected(context.Background(), func() error { attempts++; return &tgbot.TooManyRequestsError{Message: "rate limited", RetryAfter: 0} })
-	if err == nil || attempts != 4 {
-		t.Fatal("repeated rate rejections were unbounded")
+}
+
+func TestTelegramOutbound_UncertainWritesAreNeverReplayed(t *testing.T) {
+	for _, operation := range []string{"send", "buttons", "preview", "finalize"} {
+		t.Run(operation, func(t *testing.T) {
+			inner := newStubTelegramBot()
+			unknown := errors.New("timeout awaiting response: acceptance unknown")
+			inner.sendErr = unknown
+			p := &Platform{bot: inner, edits: newTelegramEditThrottler(time.Millisecond)}
+			ctx := context.Background()
+			rc := replyContext{chatID: 42}
+			var err error
+			switch operation {
+			case "send":
+				err = p.Send(ctx, rc, "final reply")
+			case "buttons":
+				err = p.SendWithButtons(ctx, rc, "session picker", nil)
+			case "preview":
+				_, err = p.SendPreviewStart(ctx, rc, "preview")
+			case "finalize":
+				err = p.FinalizeMessage(ctx, &telegramPreviewHandle{chatID: 42, messageID: 7}, "final reply")
+			}
+			if !errors.Is(err, unknown) || inner.sendMessageCalls+inner.editMessageTextCalls != 1 {
+				t.Fatalf("uncertain %s was replayed: sends=%d edits=%d err=%v", operation, inner.sendMessageCalls, inner.editMessageTextCalls, err)
+			}
+		})
 	}
 }

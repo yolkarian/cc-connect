@@ -71,3 +71,35 @@ func TestProcessInteractiveEvents_RichCardCoalescesThoughtDeltas(t *testing.T) {
 		t.Fatalf("final reasoning/answer framing: %s", final)
 	}
 }
+
+func TestProcessInteractiveEvents_SeparateThoughtsAcrossQuestionAndModelSwitch(t *testing.T) {
+	for _, boundary := range []Event{
+		{Type: EventModelSwitch, ModelSwitch: &ModelSwitch{From: "model-a", To: "model-b"}},
+		{Type: EventUserInputRequest, RequestID: "question-id", Questions: []UserQuestion{{Question: "Which branch?"}}},
+	} {
+		t.Run(string(boundary.Type), func(t *testing.T) {
+			p := &stubCompactProgressPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}, style: "card", supportPayload: true}
+			e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+			defer func() { _ = e.Stop() }()
+			e.SetDisplayConfig(DisplayCfg{ThinkingMessages: true, ThinkingMaxLen: 300, Mode: "quiet", CardMode: "rich"})
+			key := "test:thought-boundary:user"
+			saved := e.sessions.GetOrCreateActive(key)
+			live := newControllableSession("original-uuid")
+			state := &interactiveState{agentSession: live, platform: p, replyCtx: "ctx"}
+			e.interactiveStates[key] = state
+			live.events <- Event{Type: EventThinking, ThinkingDelta: true, Content: "Thought before boundary."}
+			live.events <- boundary
+			live.events <- Event{Type: EventThinking, ThinkingDelta: true, Content: "Thought after boundary."}
+			live.events <- Event{Type: EventResult, Content: "ANSWER_ONLY", Done: true}
+			e.processInteractiveEvents(state, saved, e.sessions, key, "msg", time.Now(), nil, nil, state.replyCtx, 0)
+			edits := p.getPreviewEdits()
+			if len(edits) == 0 {
+				t.Fatal("no rich card updates")
+			}
+			final := edits[len(edits)-1]
+			if strings.Count(final, "Kind:thinking") != 2 || !strings.Contains(final, "Summary:Thought before boundary.") || !strings.Contains(final, "Summary:Thought after boundary.") {
+				t.Fatalf("different protocol thought blocks were merged: %s", final)
+			}
+		})
+	}
+}

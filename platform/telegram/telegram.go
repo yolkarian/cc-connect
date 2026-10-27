@@ -288,7 +288,7 @@ func defaultNewBot(ctx context.Context, token string, onUpdate func(context.Cont
 	poll := func(ctx context.Context) error {
 		return pollTelegramUpdates(ctx, httpClient, token, lastUpdateID, onUpdate, onPollSuccess)
 	}
-	return b, me, poll, nil
+	return newRateLimitRetryBot(b), me, poll, nil
 }
 
 func (p *Platform) connectLoop(ctx context.Context) {
@@ -745,7 +745,7 @@ func (p *Platform) connectedBot(action string) (telegramBot, error) {
 	if p.bot == nil {
 		return nil, fmt.Errorf("telegram: %s: bot not connected", action)
 	}
-	return p.bot, nil
+	return newRateLimitRetryBot(p.bot), nil
 }
 
 func (p *Platform) botUsername() string {

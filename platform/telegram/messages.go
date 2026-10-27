@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"html"
 	"strings"
@@ -77,38 +76,20 @@ func splitTelegramHTML(source string, limit int) []telegramTextChunk {
 }
 
 func sendTelegramChunk(ctx context.Context, bot telegramBot, params *tgbot.SendMessageParams, chunk telegramTextChunk) error {
+	bot = newRateLimitRetryBot(bot)
 	params.Text, params.ParseMode = chunk.html, models.ParseModeHTML
-	if err := telegramRetryRejected(ctx, func() error { _, err := bot.SendMessage(ctx, params); return err }); err != nil {
+	if _, err := bot.SendMessage(ctx, params); err != nil {
 		if !strings.Contains(err.Error(), "can't parse") {
 			return err
 		}
 		// Telegram explicitly rejected the HTML, so retrying the same chunk
 		// as decoded plain text cannot duplicate an accepted message.
 		params.Text, params.ParseMode = chunk.text, ""
-		if err := telegramRetryRejected(ctx, func() error { _, err := bot.SendMessage(ctx, params); return err }); err != nil {
+		if _, err := bot.SendMessage(ctx, params); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// Only an explicit 429 rejection is safe to retry. An HTTP timeout may mean
-// the message was accepted, so it must never replay the current fragment.
-func telegramRetryRejected(ctx context.Context, do func() error) error {
-	for attempt := 0; ; attempt++ {
-		err := do()
-		var rate *tgbot.TooManyRequestsError
-		if !errors.As(err, &rate) || attempt >= 3 || rate.RetryAfter < 0 || rate.RetryAfter > 120 {
-			return err
-		}
-		timer := time.NewTimer(time.Duration(rate.RetryAfter) * time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
 }
 
 // FinalizeMessage is synchronous: an accepted timer frame is not proof of
@@ -132,7 +113,7 @@ func (p *Platform) FinalizeMessage(ctx context.Context, handle any, content stri
 			return fmt.Errorf("telegram: empty final message")
 		}
 		start := 1
-		if err := telegramRetryRejected(ctx, func() error { return p.performEdit(ctx, h, chunks[0].html, chunks[0].text) }); err != nil {
+		if err := p.performEdit(ctx, h, chunks[0].html, chunks[0].text); err != nil {
 			if !telegramEditPermanent(err) {
 				return err
 			}

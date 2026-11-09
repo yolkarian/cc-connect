@@ -49,6 +49,14 @@ uses advertised `session/close` support to flush native state before stopping
 its subprocess; close is idempotent. Native history probes obey the same
 UUID-scoped teardown guard, including text and card `/history` requests.
 
+`/stop` cancels the turn and keeps the session alive, but a backend may answer
+`session/cancel` before its aborted work has unwound. A prompt sent in that
+window is rejected with `-32003 Already processing`; that rejection never
+started a turn, so the adapter waits it out and resends the same prompt instead
+of dropping the user's message. The wait is bounded so a wedged backend still
+fails with an actionable error, and `/stop` abandons a prompt that is still
+waiting rather than delivering it afterwards.
+
 The adapter prefers advertised `session/load`, which replays authoritative
 history. A backend that only advertises `sessionCapabilities.resume` is restored
 through `session/resume`; ACP defines this as reconnecting **without history

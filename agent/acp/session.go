@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -68,6 +69,11 @@ type acpSession struct {
 	// synthetic EventResult so the engine's unsolicited reader relays them
 	// to the platform instead of buffering them until the next turn.
 	promptInFlight atomic.Int32
+
+	// turnCancelRequested is set by CancelTurn so a prompt waiting for a peer
+	// to finish its previous turn is abandoned instead of being delivered
+	// after the user already asked to stop.
+	turnCancelRequested atomic.Bool
 
 	callbacks sessionCallbacks // may be nil (tests, integration harness)
 }
@@ -734,11 +740,16 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 	s.history.beginPrompt(prompt)
 	defer s.history.boundary()
 	slog.Debug("acp: sending session/prompt", "session_id", sid, "prompt_len", len(prompt))
+	s.turnCancelRequested.Store(false)
 	s.promptInFlight.Add(1)
-	res, err := s.tr.call(s.ctx, "session/prompt", params)
+	res, err := s.callPrompt(sid, params)
 	if err != nil {
 		s.promptInFlight.Add(-1)
-		s.emit(core.Event{Type: core.EventError, Error: err})
+		// A /stop that lands while we are waiting out a previous turn ends the
+		// wait: the stop reply already told the user, so no error card follows.
+		if s.ctx.Err() == nil && !s.turnCancelRequested.Load() {
+			s.emit(core.Event{Type: core.EventError, Error: err})
+		}
 		return fmt.Errorf("acp: session/prompt: %w", err)
 	}
 	slog.Debug("acp: session/prompt response", "session_id", sid, "response_len", len(res), "response", string(res))
@@ -757,6 +768,63 @@ func (s *acpSession) Send(prompt string, messageID string, images []core.ImageAt
 	})
 	s.promptInFlight.Add(-1)
 	return nil
+}
+
+// Peers such as OMP answer session/cancel immediately but keep the turn slot
+// busy until the aborted work unwinds; a prompt sent in that window is rejected
+// with -32003 before it starts. Those rejections are retried so a message sent
+// right after /stop is not lost, bounded so a wedged peer still surfaces an
+// actionable error instead of blocking the turn forever.
+var (
+	agentBusyRetryWindow = 10 * time.Minute
+	agentBusyRetryMin    = 250 * time.Millisecond
+	agentBusyRetryMax    = 5 * time.Second
+)
+
+// isAgentBusyError reports the JSON-RPC rejection a peer returns while it is
+// still finishing a previous turn.
+func isAgentBusyError(err error) bool {
+	var rpcErr *rpcErrPayload
+	if !errors.As(err, &rpcErr) || rpcErr == nil {
+		return false
+	}
+	if rpcErr.Code == -32003 {
+		return true
+	}
+	return strings.Contains(strings.ToLower(rpcErr.Message), "already processing")
+}
+
+// callPrompt retries only peer-busy rejections. A rejected prompt never started
+// a turn, so resending it cannot duplicate work or bill an extra model request.
+func (s *acpSession) callPrompt(sid string, params map[string]any) (json.RawMessage, error) {
+	deadline := time.Now().Add(agentBusyRetryWindow)
+	delay := agentBusyRetryMin
+	for attempt := 1; ; attempt++ {
+		res, err := s.tr.call(s.ctx, "session/prompt", params)
+		if err == nil || !isAgentBusyError(err) {
+			return res, err
+		}
+		if s.turnCancelRequested.Load() {
+			return nil, fmt.Errorf("acp: prompt abandoned because the previous turn is still running: %w", err)
+		}
+		if !time.Now().Add(delay).Before(deadline) {
+			return nil, fmt.Errorf("acp: previous turn still running after %s, retry once it finishes: %w", agentBusyRetryWindow, err)
+		}
+		slog.Info("acp: previous turn still finishing, retrying prompt",
+			"session_id", sid, "attempt", attempt, "delay", delay)
+		select {
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		case <-time.After(delay):
+		}
+		if s.turnCancelRequested.Load() {
+			return nil, fmt.Errorf("acp: prompt abandoned because the previous turn is still running: %w", err)
+		}
+		delay *= 2
+		if delay > agentBusyRetryMax {
+			delay = agentBusyRetryMax
+		}
+	}
 }
 
 func (s *acpSession) appendImageRefs(prompt string, images []core.ImageAttachment) string {
@@ -843,6 +911,7 @@ func (s *acpSession) CancelTurn() error {
 		return fmt.Errorf("acp: transport not available")
 	}
 	slog.Debug("acp: cancelling current turn", "session_id", sid)
+	s.turnCancelRequested.Store(true)
 	return s.tr.sendNotification("session/cancel", map[string]any{
 		"sessionId": sid,
 	})

@@ -84,6 +84,11 @@ func startACPScriptedServer(t *testing.T, results []any) (*transport, *acpScript
 			response := rpcResponseMsg{JSONRPC: "2.0", ID: request.ID, Result: result}
 			if result == nil {
 				response.Error = &rpcErrPayload{Code: -32601, Message: "method not found: " + request.Method}
+			} else if rpcErr, ok := result.(*rpcErrPayload); ok {
+				// Scripted rejections let tests exercise peer errors such as the
+				// "agent is already processing" busy reply.
+				response.Result = nil
+				response.Error = rpcErr
 			}
 			if err := encoder.Encode(response); err != nil {
 				return

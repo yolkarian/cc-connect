@@ -240,6 +240,22 @@ Sharing native persisted state enables **sequential** use, not live TUI attachme
 to an existing ACP process. Unified role/default menus are a separate UI layer;
 OMP 18.8.6 has no ACP role-setting operation.
 
+## Interactive questions and compaction
+
+The client advertises form-mode `elicitation` in `initialize`. A backend that
+routes structured questions (for example `AskUserQuestion`) through
+`elicitation/create` instead of a single-question `request_permission` prompt
+gets its form schema translated into the engine's question wizard, and the
+collected answers are sent back as a `CreateElicitationResponse`. Backends that
+only implement `request_permission` keep the existing option-picker flow, and a
+malformed elicitation form is rejected with a JSON-RPC error so the backend can
+fall back to it.
+
+`/compact` is passed through to the backend as a builtin slash command; the
+adapter publishes it as the context-compression command for the auto-compress
+threshold. Backends without compaction answer with an "unknown command" notice,
+which is harmless.
+
 ## Validation
 
 `agent/acp/model_controls_test.go` covers new/load metadata, grouped model

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,20 +39,29 @@ type initResponse struct {
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
+// appServerActivePermissionProfile identifies the permissions selected by Codex.
+type appServerActivePermissionProfile struct {
+	ID string `json:"id"`
+}
+
+// threadStartResponse carries the new thread metadata and permission provenance.
 type threadStartResponse struct {
-	Cwd             string  `json:"cwd"`
-	Model           string  `json:"model"`
-	ReasoningEffort *string `json:"reasoningEffort"`
-	Thread          struct {
+	ActivePermissionProfile *appServerActivePermissionProfile `json:"activePermissionProfile"`
+	Cwd                     string                            `json:"cwd"`
+	Model                   string                            `json:"model"`
+	ReasoningEffort         *string                           `json:"reasoningEffort"`
+	Thread                  struct {
 		ID string `json:"id"`
 	} `json:"thread"`
 }
 
+// threadResumeResponse carries the resumed thread metadata and permission provenance.
 type threadResumeResponse struct {
-	Cwd             string  `json:"cwd"`
-	Model           string  `json:"model"`
-	ReasoningEffort *string `json:"reasoningEffort"`
-	Thread          struct {
+	ActivePermissionProfile *appServerActivePermissionProfile `json:"activePermissionProfile"`
+	Cwd                     string                            `json:"cwd"`
+	Model                   string                            `json:"model"`
+	ReasoningEffort         *string                           `json:"reasoningEffort"`
+	Thread                  struct {
 		ID string `json:"id"`
 	} `json:"thread"`
 }
@@ -140,21 +148,25 @@ type appServerRequestUserInputAnswer struct {
 	Answers []string `json:"answers"`
 }
 
+// appServerSession owns the stdio JSON-RPC transport and the active thread state.
 type appServerSession struct {
-	cliBin         string
-	cliExtraArgs   []string
-	url            string
-	workDir        string
-	model          string
-	effort         string
-	mode           string
-	baseURL        string
-	modelProvider  string
-	extraEnv       []string
-	codexHome      string
-	promptPreamble string
+	cliBin            string
+	cliExtraArgs      []string
+	url               string
+	workDir           string
+	model             string
+	effort            string
+	mode              string
+	permissionProfile string
+	baseURL           string
+	modelProvider     string
+	extraEnv          []string
+	codexHome         string
+	promptPreamble    string
 
-	events chan core.Event
+	events       chan core.Event
+	eventsMu     sync.RWMutex // publishers share the lock; Close owns channel closure
+	eventsClosed bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -177,10 +189,12 @@ type appServerSession struct {
 
 	closeOnce sync.Once
 	wg        sync.WaitGroup
+	readDone  chan struct{} // drain stdout before cmd.Wait closes its pipe
 
 	stateMu      sync.Mutex
 	pendingMsgs  []string
 	currentTurn  string
+	turnRevision uint64 // terminal notifications can precede the turn/start response
 	preambleSent bool
 
 	runtimeMu sync.RWMutex
@@ -193,27 +207,29 @@ const (
 	appServerUsageRefreshTimeout = 1500 * time.Millisecond
 )
 
-func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
+// newAppServerSession connects to Codex and verifies the requested permissions before returning a usable session.
+func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string, permissionProfile string) (*appServerSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &appServerSession{
-		cliBin:           cliBin,
-		cliExtraArgs:     append([]string(nil), cliExtraArgs...),
-		url:              url,
-		workDir:          workDir,
-		model:            model,
-		effort:           effort,
-		mode:             mode,
-		baseURL:          baseURL,
-		modelProvider:    modelProvider,
-		extraEnv:         append([]string(nil), extraEnv...),
-		codexHome:        strings.TrimSpace(codexHome),
-		promptPreamble:   buildCodexPromptPreamble(systemPrompt, appendPrompt),
-		events:           make(chan core.Event, 128),
-		ctx:              sessionCtx,
-		cancel:           cancel,
-		pending:          make(map[int64]chan rpcResponseEnvelope),
-		pendingApprovals: make(map[string]chan core.PermissionResult),
-		preambleSent:     resumeID != "" && resumeID != core.ContinueSession,
+		cliBin:            cliBin,
+		cliExtraArgs:      append([]string(nil), cliExtraArgs...),
+		url:               url,
+		workDir:           workDir,
+		model:             model,
+		effort:            effort,
+		mode:              mode,
+		permissionProfile: permissionProfile,
+		baseURL:           baseURL,
+		modelProvider:     modelProvider,
+		extraEnv:          append([]string(nil), extraEnv...),
+		codexHome:         strings.TrimSpace(codexHome),
+		promptPreamble:    buildCodexPromptPreamble(systemPrompt, appendPrompt),
+		events:            make(chan core.Event, 128),
+		ctx:               sessionCtx,
+		cancel:            cancel,
+		pending:           make(map[int64]chan rpcResponseEnvelope),
+		pendingApprovals:  make(map[string]chan core.PermissionResult),
+		preambleSent:      resumeID != "" && resumeID != core.ContinueSession,
 	}
 	s.alive.Store(true)
 
@@ -315,6 +331,7 @@ func (s *appServerSession) connect() error {
 	slog.Info("codex app-server session started", "transport", "stdio", "pid", cmd.Process.Pid, "work_dir", s.workDir)
 
 	s.wg.Add(3)
+	s.readDone = make(chan struct{})
 	go s.readLoop(stdout)
 	go s.stderrLoop(stderr)
 	go s.waitLoop()
@@ -351,6 +368,7 @@ func (s *appServerSession) initialize() error {
 	return nil
 }
 
+// ensureThread starts or resumes a thread and checks that its configured permission profile took effect.
 func (s *appServerSession) ensureThread(resumeID string) error {
 	if resumeID != "" && resumeID != core.ContinueSession {
 		params := s.threadRequestParams()
@@ -362,6 +380,9 @@ func (s *appServerSession) ensureThread(resumeID string) error {
 		}
 		if resp.Thread.ID == "" {
 			return fmt.Errorf("codex app-server resume returned empty thread id")
+		}
+		if err := s.validatePermissionProfile(resp.ActivePermissionProfile); err != nil {
+			return err
 		}
 		s.applyThreadRuntimeState(resp.Cwd, resp.Model, resp.ReasoningEffort)
 		s.threadID.Store(resp.Thread.ID)
@@ -376,12 +397,30 @@ func (s *appServerSession) ensureThread(resumeID string) error {
 	if resp.Thread.ID == "" {
 		return fmt.Errorf("codex app-server start returned empty thread id")
 	}
+	if err := s.validatePermissionProfile(resp.ActivePermissionProfile); err != nil {
+		return err
+	}
 	s.applyThreadRuntimeState(resp.Cwd, resp.Model, resp.ReasoningEffort)
 	s.threadID.Store(resp.Thread.ID)
 	slog.Info("codex app-server thread started", "thread_id", resp.Thread.ID)
 	return nil
 }
 
+// validatePermissionProfile rejects ignored or replaced profiles, including older servers that do not support the field.
+func (s *appServerSession) validatePermissionProfile(active *appServerActivePermissionProfile) error {
+	if s.permissionProfile == "" {
+		return nil
+	}
+	if active == nil {
+		return fmt.Errorf("codex app-server: permission profile %q was not confirmed; use a Codex version supporting named permission profiles", s.permissionProfile)
+	}
+	if active.ID != s.permissionProfile {
+		return fmt.Errorf("codex app-server: requested permission profile %q, received %q", s.permissionProfile, active.ID)
+	}
+	return nil
+}
+
+// threadRequestParams selects either named permissions or a legacy sandbox, never both.
 func (s *appServerSession) threadRequestParams() map[string]any {
 	params := map[string]any{
 		"experimentalRawEvents":  false,
@@ -392,7 +431,9 @@ func (s *appServerSession) threadRequestParams() map[string]any {
 	}
 	if approval, sandbox := appServerModeSettings(s.mode); approval != "" {
 		params["approvalPolicy"] = approval
-		if sandbox != "" {
+		if s.permissionProfile != "" {
+			params["permissions"] = s.permissionProfile
+		} else if sandbox != "" {
 			params["sandbox"] = sandbox
 		}
 	}
@@ -486,6 +527,7 @@ func (s *appServerSession) Send(prompt string, messageID string, images []core.I
 	}
 
 	s.stateMu.Lock()
+	turnRevision := s.turnRevision
 	if !s.preambleSent {
 		prompt = prependCodexPromptPreamble(prompt, s.promptPreamble)
 		s.preambleSent = true
@@ -533,6 +575,15 @@ func (s *appServerSession) Send(prompt string, messageID string, images []core.I
 	}
 
 	s.stateMu.Lock()
+	if s.turnRevision != turnRevision {
+		// A notification already finished this turn while its response waited.
+		s.stateMu.Unlock()
+		return nil
+	}
+	if !s.alive.Load() {
+		s.stateMu.Unlock()
+		return fmt.Errorf("codex app-server connection closed during turn/start: %w", io.EOF)
+	}
 	s.currentTurn = resp.Turn.ID
 	s.pendingMsgs = s.pendingMsgs[:0]
 	s.stateMu.Unlock()
@@ -1028,6 +1079,9 @@ func (s *appServerSession) Close() error {
 	}
 
 	s.closeOnce.Do(func() {
+		s.eventsMu.Lock()
+		defer s.eventsMu.Unlock()
+		s.eventsClosed = true
 		close(s.events)
 	})
 	return nil
@@ -1035,6 +1089,9 @@ func (s *appServerSession) Close() error {
 
 func (s *appServerSession) readLoop(r io.Reader) {
 	defer s.wg.Done()
+	if s.readDone != nil {
+		defer close(s.readDone)
+	}
 
 	err := readJSONLines(r, func(data []byte) error {
 		select {
@@ -1078,17 +1135,10 @@ func (s *appServerSession) readLoop(r io.Reader) {
 		return nil
 	})
 
-	if err != nil {
-		if s.ctx.Err() == nil && !errors.Is(err, io.EOF) {
-			slog.Warn("codex app-server read failed", "error", err)
-			s.emitError(fmt.Errorf("codex app-server connection closed: %w", err))
-		}
-	} else {
+	if err == nil {
 		err = io.EOF
 	}
-	s.alive.Store(false)
-	s.rejectPending(err)
-	s.rejectPendingApprovals(err)
+	s.finishTransport(fmt.Errorf("codex app-server connection closed: %w", err))
 }
 
 func (s *appServerSession) stderrLoop(r io.Reader) {
@@ -1118,16 +1168,36 @@ func (s *appServerSession) waitLoop() {
 		return
 	}
 
-	err := cmd.Wait()
-	if s.ctx.Err() == nil && err != nil {
-		slog.Warn("codex app-server exited unexpectedly", "error", err)
-		s.emitError(fmt.Errorf("codex app-server exited: %w", err))
+	if s.readDone != nil {
+		select {
+		case <-s.readDone:
+		case <-s.contextDone():
+		}
 	}
-	s.alive.Store(false)
+	err := cmd.Wait()
 	if err == nil {
 		err = io.EOF
 	}
+	s.finishTransport(fmt.Errorf("codex app-server exited: %w", err))
+}
+
+// Retire the active turn once. Release RPC/approval waiters before event
+// delivery, which may be blocked behind a slow consumer.
+func (s *appServerSession) finishTransport(err error) {
+	s.stateMu.Lock()
+	s.alive.Store(false)
+	active := s.currentTurn != ""
+	if active {
+		s.currentTurn = ""
+		s.pendingMsgs = s.pendingMsgs[:0]
+		s.turnRevision++
+	}
+	s.stateMu.Unlock()
 	s.rejectPending(err)
+	s.rejectPendingApprovals(err)
+	if active {
+		s.emitError(err)
+	}
 }
 
 func (s *appServerSession) handleResponse(resp rpcResponseEnvelope) {
@@ -1193,16 +1263,11 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 		}
 
 	case "thread/status/changed":
-		var notif struct {
-			ThreadID string `json:"threadId"`
-			Status   struct {
-				Type string `json:"type"`
-			} `json:"status"`
-		}
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil && notif.Status.Type == "idle" && s.acceptsThreadNotification(method, notif.ThreadID) {
-			// In codex 0.125+, thread going idle signals turn completion.
-			s.completeTurn()
-		}
+		// Thread status has neither a turn ID nor a terminal outcome. An idle
+		// notification may precede the final items or a failed turn/completed,
+		// and a delayed idle may belong to the previous turn. Only the matching
+		// turn/completed notification can finish the active turn.
+		return
 
 	case "account/rateLimits/updated":
 		var notif appServerRateLimitsResponse
@@ -1219,7 +1284,10 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 	case "error":
 		var notif errorNotification
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil && strings.TrimSpace(notif.Message) != "" {
-			s.emitError(fmt.Errorf("%s", notif.Message))
+			err := fmt.Errorf("%s", notif.Message)
+			if !s.failTurn(err) {
+				s.emitError(err) // retain connection errors outside an active turn
+			}
 		}
 	}
 }
@@ -1610,21 +1678,24 @@ func (s *appServerSession) completeTurn() {
 		return
 	}
 	s.currentTurn = ""
+	s.turnRevision++
 	s.stateMu.Unlock()
 	s.flushPendingAsText()
 	s.emit(core.Event{Type: core.EventResult, SessionID: s.CurrentSessionID(), Done: true})
 }
 
-func (s *appServerSession) failTurn(err error) {
+func (s *appServerSession) failTurn(err error) bool {
 	s.stateMu.Lock()
 	if s.currentTurn == "" {
 		s.stateMu.Unlock()
-		return
+		return false
 	}
 	s.currentTurn = ""
+	s.turnRevision++
 	s.pendingMsgs = s.pendingMsgs[:0]
 	s.stateMu.Unlock()
 	s.emitError(err)
+	return true
 }
 
 func (s *appServerSession) flushPendingAsThinking() {
@@ -1654,11 +1725,31 @@ func (s *appServerSession) flushPendingAsText() {
 }
 
 func (s *appServerSession) emit(event core.Event) {
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+	if s.eventsClosed {
+		return
+	}
+	select {
+	case <-s.contextDone():
+		return
+	default:
+	}
 	select {
 	case s.events <- event:
+		return
 	default:
-		slog.Warn("codex appserver: event channel full, dropping event", "type", event.Type)
 	}
+	if event.Type == core.EventResult || event.Type == core.EventError || event.Done {
+		// Preserve FIFO and terminal delivery. Close cancels this wait before
+		// taking eventsMu to close the channel.
+		select {
+		case s.events <- event:
+		case <-s.contextDone():
+		}
+		return
+	}
+	slog.Warn("codex appserver: event channel full, dropping event", "type", event.Type)
 }
 
 func (s *appServerSession) emitError(err error) {

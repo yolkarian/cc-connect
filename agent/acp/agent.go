@@ -308,6 +308,12 @@ func (a *Agent) Stop() error {
 	return nil
 }
 
+// CompressCommand implements core.ContextCompressor. ACP has no dedicated
+// compaction RPC; servers that support compaction (e.g. kimi acp) intercept
+// "/compact" as a builtin slash command inside session/prompt. Servers
+// without it answer with an "unknown command" notice, which is harmless.
+func (a *Agent) CompressCommand() string { return "/compact" }
+
 // -- AgentDoctorInfo --
 
 func (a *Agent) CLIBinaryName() string {

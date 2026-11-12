@@ -1,5 +1,7 @@
 # Telegram Setup Guide
 
+[English](telegram.md) | [Русский](telegram.ru.md)
+
 This guide walks you through connecting **cc-connect** to Telegram, so you can chat with your local Claude Code via a Telegram bot.
 
 ## Prerequisites
@@ -330,6 +332,15 @@ word spacing, punctuation, paragraphs, and newlines. The reasoning panel uses
 one heading icon, not a thinking emoji before each line. Tool calls remain
 individually counted and status-marked. `thinking_max_len` caps the accumulated
 reasoning preview rather than independently treating each token as a step.
+
+### Telegram Bot API 10.x rich messages
+
+Plain replies, plain sends and preview creation are first attempted through
+the Bot API 10.x rich-message endpoint (`sendRichMessage`, markdown payload).
+Messages created that way are edited with the matching rich-message payload
+so native tables survive. Any rejection falls back to the adapter's own
+chunked HTML path described below, and previews created the ordinary way skip
+the rich edit call because Telegram rejects it for non-rich messages.
 
 ### Long answers and final delivery
 

@@ -116,6 +116,9 @@ func newWorkspaceSkillsEngine(t *testing.T, p Platform) (*Engine, string, string
 	}
 	writeWorkspaceSkill(t, global, "global-skill", "Global instructions")
 	writeWorkspaceSkill(t, global, "shared-skill", "Wrong global instructions")
+	// Normalize after the fixtures exist: EvalSymlinks needs a real path, and
+	// t.TempDir() sits under the /var -> /private/var symlink on macOS.
+	a, b, global = normalizeWorkspacePath(a), normalizeWorkspacePath(b), normalizeWorkspacePath(global)
 	name := "workspace-skills-" + t.Name()
 	RegisterAgent(name, func(opts map[string]any) (Agent, error) {
 		return &workspaceSkillAgent{name: name, workDir: opts["work_dir"].(string), global: global}, nil

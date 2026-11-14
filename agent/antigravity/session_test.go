@@ -248,7 +248,10 @@ func TestSendDoesNotHoldStdinOpen(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 
-	deadline := time.After(3 * time.Second)
+	// Generous bound: this observes a spawned shell process, and a loaded CI
+	// host can take seconds to schedule it. The assertion is that stdin is
+	// closed after Send, not how fast the fake agent prints.
+	deadline := time.After(15 * time.Second)
 	var text strings.Builder
 	for {
 		select {

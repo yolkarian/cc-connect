@@ -57,7 +57,13 @@ func TestSkillsMetadataProcess(t *testing.T) {
 }
 
 func TestListSkills_ExcludesClaudeDisabledAndCachedSkills(t *testing.T) {
-	tmp := t.TempDir()
+	// Resolve the temp root before deriving paths: the helper subprocess
+	// compares its own os.Getwd() with the cwd sent in the request, and
+	// t.TempDir() sits under the /var -> /private/var symlink on macOS.
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	workDir := filepath.Join(tmp, "workspace")
 	codexHome := filepath.Join(tmp, "codex")
 	setTestHome(t, tmp)

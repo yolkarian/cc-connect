@@ -84,13 +84,17 @@ const (
 func newScopedEngine(t *testing.T) (*Engine, *stubPlatformEngine, *scopedKeyPlatform, string) {
 	t.Helper()
 	baseDir := t.TempDir()
-	shared := normalizeWorkspacePath(filepath.Join(baseDir, "repo-shared"))
-	other := normalizeWorkspacePath(filepath.Join(baseDir, "repo-other"))
-	for _, dir := range []string{shared, other} {
+	sharedDir := filepath.Join(baseDir, "repo-shared")
+	otherDir := filepath.Join(baseDir, "repo-other")
+	for _, dir := range []string{sharedDir, otherDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// Normalize after creation: EvalSymlinks only resolves an existing path, and
+	// t.TempDir() sits under the /var -> /private/var symlink on macOS.
+	shared := normalizeWorkspacePath(sharedDir)
+	other := normalizeWorkspacePath(otherDir)
 
 	sessionsByWorkDir := map[string][]AgentSessionInfo{
 		shared: {
@@ -198,10 +202,11 @@ func TestSessionContextForKey_AppliesDirOverride(t *testing.T) {
 	e, _, _, shared := newScopedEngine(t)
 	bindScopedTopic(e, "om_root_a", shared)
 
-	override := normalizeWorkspacePath(filepath.Join(filepath.Dir(shared), "repo-alpha"))
-	if err := os.MkdirAll(override, 0o755); err != nil {
+	overrideDir := filepath.Join(filepath.Dir(shared), "repo-alpha")
+	if err := os.MkdirAll(overrideDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	override := normalizeWorkspacePath(overrideDir)
 	interactiveKey := shared + ":" + topicKeyA
 	e.projectState.SetWorkspaceDirOverride(interactiveKey, override)
 	e.projectState.Save()

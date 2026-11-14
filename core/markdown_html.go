@@ -361,68 +361,6 @@ func isTableSepLine(s string) bool {
 	return len(s) >= 2 && strings.Contains(s, "-") && strings.Contains(s, "|") && reTableSep.MatchString(s)
 }
 
-var rePreSplit = regexp.MustCompile(`(?s)(<pre(?:\s+[^>]*)?>.*?</pre>)`)
-
-// FormatSmartTelegramHTML converts markdown into Telegram Rich Message HTML:
-// 1. Converts all markdown syntax (tables, code, lists, inline styles, etc.) to Telegram HTML.
-// 2. Extracts leading title/header so it stays at the top.
-// 3. Separates <pre> (tables, code blocks) so they remain full-width outside quotes.
-// 4. Wraps the remaining body content in <blockquote expandable> so every message is expandable.
-// 5. Preserves trailing quote footer.
-func FormatSmartTelegramHTML(md string) string {
-	html := MarkdownToSimpleHTML(md)
-	html = strings.TrimSpace(html)
-	if html == "" {
-		return ""
-	}
-
-	if utf8.RuneCountInString(html) < 80 {
-		return html
-	}
-
-	footer := ""
-	body := html
-	if idx := strings.LastIndex(body, "<blockquote>"); idx > 0 && strings.HasSuffix(body, "</blockquote>") {
-		footer = body[idx:]
-		body = strings.TrimSpace(body[:idx])
-	}
-
-	segments := rePreSplit.Split(body, -1)
-	matches := rePreSplit.FindAllString(body, -1)
-
-	var outParts []string
-	for i, seg := range segments {
-		seg = strings.TrimSpace(seg)
-		if seg != "" {
-			if strings.HasPrefix(seg, "<blockquote") && strings.HasSuffix(seg, "</blockquote>") {
-				outParts = append(outParts, seg)
-			} else {
-				lines := strings.Split(seg, "\n")
-				if len(lines) > 1 && (strings.HasPrefix(lines[0], "<b>") || utf8.RuneCountInString(lines[0]) < 80) {
-					header := lines[0]
-					rest := strings.TrimSpace(strings.Join(lines[1:], "\n"))
-					if rest != "" {
-						outParts = append(outParts, header, "<blockquote expandable>"+rest+"</blockquote>")
-					} else {
-						outParts = append(outParts, header)
-					}
-				} else {
-					outParts = append(outParts, "<blockquote expandable>"+seg+"</blockquote>")
-				}
-			}
-		}
-		if i < len(matches) {
-			outParts = append(outParts, matches[i])
-		}
-	}
-
-	if footer != "" {
-		outParts = append(outParts, footer)
-	}
-
-	return strings.Join(outParts, "\n\n")
-}
-
 // IsRTL returns true if the text contains Persian or Arabic characters.
 func IsRTL(s string) bool {
 	for _, r := range s {

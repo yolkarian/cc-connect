@@ -335,12 +335,23 @@ reasoning preview rather than independently treating each token as a step.
 
 ### Telegram Bot API 10.x rich messages
 
-Plain replies, plain sends and preview creation are first attempted through
-the Bot API 10.x rich-message endpoint (`sendRichMessage`, markdown payload).
-Messages created that way are edited with the matching rich-message payload
-so native tables survive. Any rejection falls back to the adapter's own
-chunked HTML path described below, and previews created the ordinary way skip
-the rich edit call because Telegram rejects it for non-rich messages.
+Rich messages are opt-in because the endpoint only exists on Bot API 10.x:
+
+```toml
+[projects.platforms.options]
+rich_messages = true
+```
+
+With the option enabled, plain replies, plain sends, button messages and
+preview creation are first attempted through `sendRichMessage` (markdown
+payload). Messages created that way are edited with the matching rich-message
+payload so native tables survive. Any rejection falls back to the adapter's
+own chunked HTML path described below, and previews created the ordinary way
+skip the rich edit call because Telegram rejects it for non-rich messages.
+
+The option is off by default: on older Bot API deployments every attempt would
+be a failed request, and the chunked HTML path already covers tables, code
+blocks and expandable panels.
 
 ### Long answers and final delivery
 

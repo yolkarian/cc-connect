@@ -114,6 +114,7 @@ type Platform struct {
 	groupReplyAll         bool
 	shareSessionInChannel bool
 	enableReactions       bool
+	richMessages          bool   // opt-in: try Bot API 10.x rich messages before chunked HTML
 	progressStyle         string // "legacy" | "compact"; rich card mode is expressed through display/card_mode = "rich"
 	httpClient            *http.Client
 	edits                 *telegramEditThrottler
@@ -173,6 +174,7 @@ func New(opts map[string]any) (core.Platform, error) {
 	groupReplyAll, _ := opts["group_reply_all"].(bool)
 	shareSessionInChannel, _ := opts["share_session_in_channel"].(bool)
 	enableReactions, _ := opts["enable_reactions"].(bool)
+	richMessages, _ := opts["rich_messages"].(bool)
 
 	// Default to "compact" so streaming edits work out of the box. Telegram has
 	// no rich card UI, so "card" is normalized to "compact". Users can opt out
@@ -198,6 +200,7 @@ func New(opts map[string]any) (core.Platform, error) {
 		groupReplyAll:         groupReplyAll,
 		shareSessionInChannel: shareSessionInChannel,
 		enableReactions:       enableReactions,
+		richMessages:          richMessages,
 		progressStyle:         progressStyle,
 		httpClient:            httpClient,
 		edits:                 newTelegramEditThrottler(cardEditMinInterval),
@@ -1211,11 +1214,14 @@ func (p *Platform) Reply(ctx context.Context, rctx any, content string) error {
 		return fmt.Errorf("telegram: invalid reply context type %T", rctx)
 	}
 
-	// Try native Telegram Bot API 10.x sendRichMessage first
-	if _, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, rc.messageID, content, nil); err == nil {
-		return nil
-	} else {
-		slog.Debug("telegram: sendRichMessage fallback", "error", err)
+	if p.richMessages {
+		// Opt-in Bot API 10.x rich message; the chunked HTML path below is the
+		// fallback when the endpoint or the payload is rejected.
+		if _, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, rc.messageID, content, nil); err == nil {
+			return nil
+		} else {
+			slog.Debug("telegram: sendRichMessage fallback", "error", err)
+		}
 	}
 
 	bot, err := p.connectedBot("reply")
@@ -1232,11 +1238,14 @@ func (p *Platform) Send(ctx context.Context, rctx any, content string) error {
 		return fmt.Errorf("telegram: invalid reply context type %T", rctx)
 	}
 
-	// Try native Telegram Bot API 10.x sendRichMessage first
-	if _, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, 0, content, nil); err == nil {
-		return nil
-	} else {
-		slog.Debug("telegram: sendRichMessage fallback", "error", err)
+	if p.richMessages {
+		// Opt-in Bot API 10.x rich message; the chunked HTML path below is the
+		// fallback when the endpoint or the payload is rejected.
+		if _, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, 0, content, nil); err == nil {
+			return nil
+		} else {
+			slog.Debug("telegram: sendRichMessage fallback", "error", err)
+		}
 	}
 
 	bot, err := p.connectedBot("send")
@@ -1406,11 +1415,14 @@ func (p *Platform) SendWithButtons(ctx context.Context, rctx any, content string
 	}
 	markup := &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 
-	// Try native Telegram Bot API 10.x sendRichMessage first
-	if _, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, 0, content, markup); err == nil {
-		return nil
-	} else {
-		slog.Debug("telegram: sendRichMessage with buttons fallback", "error", err)
+	if p.richMessages {
+		// Opt-in Bot API 10.x rich message; the chunked HTML path below is the
+		// fallback when the endpoint or the payload is rejected.
+		if _, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, 0, content, markup); err == nil {
+			return nil
+		} else {
+			slog.Debug("telegram: sendRichMessage with buttons fallback", "error", err)
+		}
 	}
 
 	rc.messageID = 0
@@ -1518,11 +1530,14 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 		return nil, fmt.Errorf("telegram: invalid reply context type %T", rctx)
 	}
 
-	// Try native Telegram Bot API 10.x sendRichMessage first
-	if msg, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, 0, content, nil); err == nil && msg != nil {
-		return &telegramPreviewHandle{chatID: rc.chatID, threadID: rc.threadID, messageID: msg.ID, rich: true}, nil
-	} else {
-		slog.Debug("telegram: sendRichMessage preview start fallback", "error", err)
+	if p.richMessages {
+		// Opt-in Bot API 10.x rich message; a plain preview below keeps every
+		// later edit on the chunked HTML path.
+		if msg, err := p.sendRichMessage(ctx, rc.chatID, rc.threadID, 0, content, nil); err == nil && msg != nil {
+			return &telegramPreviewHandle{chatID: rc.chatID, threadID: rc.threadID, messageID: msg.ID, rich: true}, nil
+		} else {
+			slog.Debug("telegram: sendRichMessage preview start fallback", "error", err)
+		}
 	}
 
 	bot, err := p.connectedBot("send preview")

@@ -268,6 +268,28 @@ working for `kimi acp` after a bridge restart. The reader lives in
 `internal/kimitranscript` and is shared with the Kimi CLI adapter, which keeps
 the agent packages independent of each other.
 
+## Merge policy
+
+Upstream also maintains this adapter with different state ownership. To keep
+upstream syncs reviewable, the fork's policy lives in files that upstream does
+not normally touch:
+
+- `agent_fork_defaults.go` - constructor defaults surface
+  (`SupportsSessionModelControl`, `GetModel`, `GetReasoningEffort`,
+  `WorkspaceAgentOptions`); model state itself stays session-owned.
+- `agent_modes.go` - `ModeSwitcher` and the mode cache callbacks.
+- `session_lifecycle.go` - the resume/load preference and `session/new`
+  identity allocation.
+- `session_defaults.go` - applying constructor defaults to a new conversation
+  while a loaded conversation keeps its saved model and effort.
+- `model_controls.go`, `context_usage.go`, `history.go` - per-session model,
+  usage and history implementations.
+
+`agent.go` and `session.go` keep the protocol plumbing that upstream owns.
+Conflicts in the files above are resolved by keeping the fork's behavior;
+conflicts in the plumbing files are resolved with upstream's version unless it
+changes the contracts those files rely on.
+
 ## Validation
 
 `agent/acp/model_controls_test.go` covers new/load metadata, grouped model

@@ -172,38 +172,9 @@ func newACPSession(ctx context.Context, cfg acpSessionConfig) (*acpSession, erro
 		return nil, err
 	}
 
-	// Apply the agent-level mode preference now that we have a session
-	// id. If set_mode fails (e.g. modeId unknown to this backend) we
-	// log and carry on with whatever mode the server defaulted to —
-	// the alternative would be to reject the session entirely, which
-	// is worse UX for a non-critical control.
-	if strings.TrimSpace(cfg.initialMode) != "" {
-		if ok := s.SetLiveMode(cfg.initialMode); !ok {
-			slog.Warn("acp: initial mode could not be applied",
-				"mode", cfg.initialMode,
-				"session_id", s.currentACPSessionID(),
-			)
-		}
-	}
-
-	// Constructor options are explicit defaults for a new conversation only.
-	// A successful load owns its saved model/effort; never reset it on resume.
-	if cfg.resumeSessionID != "" {
-		return s, nil
-	}
-	controlCtx, controlCancel := context.WithTimeout(sessionCtx, 30*time.Second)
-	defer controlCancel()
-	if cfg.initialModel != "" && cfg.initialModel != s.ModelControls().CurrentModel {
-		if err := s.SetSessionModel(controlCtx, cfg.initialModel); err != nil {
-			_ = s.Close()
-			return nil, err
-		}
-	}
-	if cfg.initialReasoning != "" && cfg.initialReasoning != s.ModelControls().CurrentReasoningEffort {
-		if err := s.SetSessionReasoningEffort(controlCtx, cfg.initialReasoning); err != nil {
-			_ = s.Close()
-			return nil, err
-		}
+	if err := s.applyNewConversationDefaults(cfg, sessionCtx); err != nil {
+		_ = s.Close()
+		return nil, err
 	}
 	return s, nil
 }
@@ -266,74 +237,10 @@ func (s *acpSession) handshake(resumeSessionID string, authMethod string) error 
 		slog.Debug("acp: authenticated", "method_id", authMethod)
 	}
 
-	wantResume := resumeSessionID != "" && resumeSessionID != core.ContinueSession
-	if wantResume {
-		// Load is preferred because it replays authoritative history. Resume
-		// is a separate capability for servers that cannot replay history;
-		// it is not a retry path after a failed load.
-		method := "session/load"
-		if !initOut.AgentCapabilities.LoadSession {
-			if !resumeSupported {
-				return fmt.Errorf("acp: server does not support session/load or session/resume")
-			}
-			method = "session/resume"
-		}
-		s.history.bind(resumeSessionID)
-		result, err := s.tr.call(ctx, method, map[string]any{
-			"sessionId":  resumeSessionID,
-			"cwd":        s.workDir,
-			"mcpServers": []any{},
-		})
-		if err != nil {
-			return fmt.Errorf("acp: %s: %w", method, err)
-		}
-		var restored *struct {
-			SessionID     string            `json:"sessionId"`
-			Modes         *acpModesBlock    `json:"modes"`
-			ConfigOptions []acpConfigOption `json:"configOptions"`
-		}
-		if err := json.Unmarshal(result, &restored); err != nil {
-			return fmt.Errorf("acp: parse %s: %w", method, err)
-		}
-		if restored == nil {
-			return fmt.Errorf("acp: invalid %s response: expected a session state object", method)
-		}
-		if restored.SessionID != "" && restored.SessionID != resumeSessionID {
-			return fmt.Errorf("acp: %s returned session %q, requested %q", method, restored.SessionID, resumeSessionID)
-		}
-		// Only session/new allocates identity. Neither restore method may
-		// silently replace the requested UUID, even if a vendor echoes one.
-		s.setACPSessionID(resumeSessionID)
-		s.absorbModes(restored.Modes)
-		s.absorbConfigOptions(restored.ConfigOptions)
-		s.historyComplete = method == "session/load"
-		return nil
+	if resumeSessionID != "" && resumeSessionID != core.ContinueSession {
+		return s.resumeExisting(ctx, resumeSessionID, initOut.AgentCapabilities.LoadSession, resumeSupported)
 	}
-
-	newParams := map[string]any{
-		"cwd":        s.workDir,
-		"mcpServers": []any{},
-	}
-	newRes, err := s.tr.call(ctx, "session/new", newParams)
-	if err != nil {
-		return fmt.Errorf("acp: session/new: %w", err)
-	}
-	var sn struct {
-		SessionID     string            `json:"sessionId"`
-		Modes         *acpModesBlock    `json:"modes"`
-		ConfigOptions []acpConfigOption `json:"configOptions"`
-	}
-	if err := json.Unmarshal(newRes, &sn); err != nil {
-		return fmt.Errorf("acp: parse session/new: %w", err)
-	}
-	if sn.SessionID == "" {
-		return fmt.Errorf("acp: session/new: empty sessionId")
-	}
-	s.setACPSessionID(sn.SessionID)
-	s.absorbModes(sn.Modes)
-	s.absorbConfigOptions(sn.ConfigOptions)
-	s.historyComplete = true
-	return nil
+	return s.startFresh(ctx)
 }
 
 // absorbModes copies a modes block into the session's cache and fans

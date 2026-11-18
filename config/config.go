@@ -510,6 +510,11 @@ type ProjectConfig struct {
 	// limited to git URLs; use /workspace bind or /workspace route for explicit
 	// local bindings.
 	WorkspaceInitAllowLocalPaths *bool              `toml:"workspace_init_allow_local_paths,omitempty"`
+	// AutoBindBaseDir binds any channel that has no workspace binding yet to
+	// base_dir on its first message instead of starting the conversational
+	// init flow. Opt-in: a wrong default would silently run every channel in
+	// one directory.
+	AutoBindBaseDir *bool `toml:"auto_bind_base_dir,omitempty"`
 	Agent                        AgentConfig        `toml:"agent"`
 	Platforms                    []PlatformConfig   `toml:"platforms"`
 	Heartbeat                    HeartbeatConfig    `toml:"heartbeat"`

@@ -451,6 +451,9 @@ func main() {
 			if proj.WorkspaceInitAllowLocalPaths != nil {
 				engine.SetWorkspaceInitAllowLocalPaths(*proj.WorkspaceInitAllowLocalPaths)
 			}
+			if proj.AutoBindBaseDir != nil {
+				engine.SetWorkspaceAutoBindBaseDir(*proj.AutoBindBaseDir)
+			}
 			idleMins := cfg.WorkspaceIdleTimeoutMins
 			if idleMins == nil && proj.WorkspaceIdleTimeoutMinsLegacy != nil {
 				slog.Warn("workspace_idle_timeout_mins under [[projects]] is deprecated; move it to the top level of config.toml. Honoring the legacy value for backwards compatibility.",

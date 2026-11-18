@@ -474,6 +474,7 @@ type Engine struct {
 	baseDir                      string
 	skipGit                      bool
 	workspaceInitAllowLocalPaths bool
+	workspaceAutoBindBaseDir     bool
 	workspaceBindings            *WorkspaceBindingManager
 	workspacePool                *workspacePool
 	initFlows                    map[string]*workspaceInitFlow // workspace channel key → init state
@@ -856,6 +857,12 @@ func (e *Engine) SetWorkspaceIdleTimeout(d time.Duration) {
 // existing local directories as targets. When false, init remains git-URL only.
 func (e *Engine) SetWorkspaceInitAllowLocalPaths(allow bool) {
 	e.workspaceInitAllowLocalPaths = allow
+}
+
+// SetWorkspaceAutoBindBaseDir makes an unbound channel bind to base_dir on its
+// first message instead of running the conversational workspace init flow.
+func (e *Engine) SetWorkspaceAutoBindBaseDir(auto bool) {
+	e.workspaceAutoBindBaseDir = auto
 }
 
 func (e *Engine) runIdleReaper() {
@@ -17739,18 +17746,28 @@ func (e *Engine) resolveWorkspace(p Platform, channelID string) (string, string,
 		}
 	}
 
-	if channelName == "" {
-		return "", "", nil
+	// Step 3: Convention match — check if base_dir/<channel-name> exists
+	if channelName != "" {
+		candidate := filepath.Join(e.baseDir, channelName)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			// Auto-bind
+			projectKey := "project:" + e.name
+			normalized := normalizeWorkspacePath(candidate)
+			e.workspaceBindings.Bind(projectKey, channelKey, channelName, normalized)
+			slog.Info("workspace auto-bound by convention",
+				"channel", channelName, "workspace", normalized)
+			return normalized, channelName, nil
+		}
 	}
 
-	// Step 3: Convention match — check if base_dir/<channel-name> exists
-	candidate := filepath.Join(e.baseDir, channelName)
-	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-		// Auto-bind
+	// Step 4: opt-in default binding to base_dir. New channels (a second chat
+	// platform, a new guild channel) start working immediately instead of
+	// waiting for an explicit /workspace route.
+	if e.workspaceAutoBindBaseDir && e.baseDir != "" {
 		projectKey := "project:" + e.name
-		normalized := normalizeWorkspacePath(candidate)
+		normalized := normalizeWorkspacePath(e.baseDir)
 		e.workspaceBindings.Bind(projectKey, channelKey, channelName, normalized)
-		slog.Info("workspace auto-bound by convention",
+		slog.Info("workspace auto-bound to base_dir",
 			"channel", channelName, "workspace", normalized)
 		return normalized, channelName, nil
 	}

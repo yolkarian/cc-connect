@@ -763,6 +763,10 @@ level = "info" # debug, info, warn, error
 # skip_git = true # skip bind git repo, create a dir directly
 # base_dir = "~/workspace"
 # workspace_init_allow_local_paths = true  # Optional: allow /workspace init <local-dir>; default false keeps init git-URL only
+# auto_bind_base_dir = true  # Optional: bind any channel that has no workspace
+#                            # binding to base_dir on its first message instead of
+#                            # starting the conversational init flow. Off by default
+#                            # because it points every new channel at one directory.
 #
 # [projects.agent]
 # type = "claudecode"

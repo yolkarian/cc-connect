@@ -820,10 +820,11 @@ func TestDispatchMessage_UsesWrappedProgressPlatformForHandler(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	pp, ok := pAny.(*progressPlatform)
+	cp, ok := pAny.(*cardProgressPlatform)
 	if !ok {
-		t.Fatalf("platform type = %T, want *progressPlatform", pAny)
+		t.Fatalf("platform type = %T, want *cardProgressPlatform", pAny)
 	}
+	pp := cp.progressPlatform
 
 	var got core.Platform
 	pp.Platform.handler = func(p core.Platform, msg *core.Message) {
@@ -835,8 +836,8 @@ func TestDispatchMessage_UsesWrappedProgressPlatformForHandler(t *testing.T) {
 	if got == nil {
 		t.Fatal("handler platform = nil, want wrapped platform")
 	}
-	if got != pp {
-		t.Fatalf("handler platform = %T, want wrapped %T", got, pp)
+	if got != pAny {
+		t.Fatalf("handler platform = %T, want wrapped %T", got, pAny)
 	}
 	sp, ok := got.(core.ProgressStyleProvider)
 	if !ok {

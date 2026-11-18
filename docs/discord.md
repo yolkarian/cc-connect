@@ -117,7 +117,7 @@ token = "MTk4NjIyNDgzNDcOTY3NDUxMg.G8vKqh.xxx..."
 
 > cc-connect automatically configures the required Intents (MESSAGE_CONTENT, GUILD_MESSAGES, DIRECT_MESSAGES).
 > With `thread_isolation = true`, cc-connect creates or reuses a Discord thread for each session and routes follow-up messages by thread channel ID.
-> `progress_style = "compact"` merges thinking/tool updates into one editable message; `progress_style = "card"` renders a Discord-native embed progress card and still sends the final answer as a normal message.
+> `progress_style = "compact"` merges thinking/tool updates into one editable message; `progress_style = "card"` renders the whole turn as **one** Discord embed that streams in place — colour-coded status, reasoning/tool panels, the answer body and the engine footer — matching the Telegram Card 2.0 layout. Discord has no collapsible sections, so panels are emitted as `||spoiler||` text the reader can reveal; an answer longer than one embed description is delivered as the card plus follow-up messages.
 
 ---
 
@@ -212,7 +212,7 @@ cc-connect: 🔧 Tool: Bash(ls -la)
 cc-connect: Here's the project structure...
 ```
 
-If you enable `progress_style = "card"`, Discord shows one editable progress embed during the turn, then the final answer arrives as a separate normal message. This reduces channel noise compared with the legacy multi-message flow.
+If you enable `progress_style = "card"`, Discord keeps the entire turn in one editable embed: the header colour shows running/completed, reasoning and tool steps stay inside the card, and the answer streams into the same message body. Only overflow beyond one embed description (4096 characters) is sent as follow-up messages, so a short answer never produces a second message.
 
 ---
 

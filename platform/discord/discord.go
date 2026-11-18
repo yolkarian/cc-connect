@@ -142,6 +142,13 @@ func New(opts map[string]any) (core.Platform, error) {
 	}
 	if progressStyle == "compact" || progressStyle == "card" {
 		wrapped := &progressPlatform{Platform: base}
+		if progressStyle == "card" {
+			// Card mode adds the single-message streaming card on top of the
+			// preview fallback; compact keeps its existing per-update previews.
+			card := &cardProgressPlatform{progressPlatform: wrapped}
+			base.self = card
+			return card, nil
+		}
 		base.self = wrapped
 		return wrapped, nil
 	}

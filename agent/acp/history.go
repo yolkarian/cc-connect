@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/chenhg5/cc-connect/core"
+	"github.com/chenhg5/cc-connect/internal/kimitranscript"
 )
 
 // Replay is retained for history inspection, never emitted as a new answer.
@@ -148,14 +150,41 @@ func (s *acpSession) cachedHistory(limit int) ([]core.HistoryEntry, error) {
 	return s.history.snapshot(limit), nil
 }
 
-// GetSessionHistory uses the live session's replay/cache if it owns this UUID.
-// Otherwise a metadata-only explicit load collects replay, then closes. The
-// per-agent lifecycle lock prevents a concurrent load/start of the same UUID;
-// no prompt, session/new, model setter or native JSONL parsing is involved.
+// GetSessionHistory serves history from the ACP server first: the live
+// session's replay/cache if it owns this UUID, otherwise a metadata-only
+// explicit load that collects replay and closes. When the server cannot answer
+// (it no longer holds the session, it only advertises resume, the probe fails,
+// or it replays nothing) the transcript a Kimi backend persists on disk is used
+// instead, so /history keeps working for `kimi acp` after a bridge restart. The
+// ACP path stays authoritative; the on-disk reader never runs for a live
+// session that owns complete history.
 func (a *Agent) GetSessionHistory(ctx context.Context, id string, limit int) ([]core.HistoryEntry, error) {
 	if id == "" || id == core.ContinueSession {
 		return nil, fmt.Errorf("acp: history requires an explicit session id")
 	}
+	entries, nativeErr := a.nativeHistory(ctx, id, limit)
+	if nativeErr == nil && len(entries) > 0 {
+		return entries, nil
+	}
+	a.mu.RLock()
+	env := append(append([]string{}, a.extraEnv...), a.sessionEnv...)
+	a.mu.RUnlock()
+	fallback, fallbackErr := kimitranscript.ReadSessionHistory(id, limit, env...)
+	if fallbackErr == nil && len(fallback) > 0 {
+		slog.Debug("acp: history served from the Kimi transcript",
+			"session_id", id, "entries", len(fallback), "acp_error", nativeErr)
+		return fallback, nil
+	}
+	if nativeErr != nil {
+		return nil, nativeErr
+	}
+	return entries, nil
+}
+
+// nativeHistory holds the ACP-server path of GetSessionHistory. The per-agent
+// lifecycle lock prevents a concurrent load/start of the same UUID; no prompt,
+// session/new or model setter is involved.
+func (a *Agent) nativeHistory(ctx context.Context, id string, limit int) ([]core.HistoryEntry, error) {
 	a.sessionsMu.Lock()
 	defer a.sessionsMu.Unlock()
 	if live := a.liveSessions[id]; live != nil && live.Alive() {

@@ -256,6 +256,18 @@ adapter publishes it as the context-compression command for the auto-compress
 threshold. Backends without compaction answer with an "unknown command" notice,
 which is harmless.
 
+## History sources
+
+The ACP server is authoritative for a conversation's history: a live session
+serves its replay cache, otherwise a metadata-only `session/load` probe
+collects the replay and closes. When the server cannot answer - it no longer
+holds the UUID, it only advertises `session/resume`, or the probe fails - the
+adapter falls back to the transcript a Kimi backend writes under
+`~/.kimi-code/sessions` (or `$KIMI_CODE_HOME/sessions`), so `/history` keeps
+working for `kimi acp` after a bridge restart. The reader lives in
+`internal/kimitranscript` and is shared with the Kimi CLI adapter, which keeps
+the agent packages independent of each other.
+
 ## Validation
 
 `agent/acp/model_controls_test.go` covers new/load metadata, grouped model

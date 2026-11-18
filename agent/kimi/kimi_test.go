@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chenhg5/cc-connect/core"
+	"github.com/chenhg5/cc-connect/internal/kimitranscript"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -315,10 +316,10 @@ func TestListKimiSessions_BothFlavors(t *testing.T) {
 	_, ok = byID["session_other-1"]
 	assert.False(t, ok, "Kimi Code session from another workDir must be filtered out")
 
-	// findKimiSessionDir must locate sessions in both roots.
-	assert.NotEmpty(t, findKimiSessionDir("legacy-uuid-1"))
-	assert.NotEmpty(t, findKimiSessionDir("session_modern-1"))
-	assert.Empty(t, findKimiSessionDir("does-not-exist"))
+	// FindSessionDir must locate sessions in both roots.
+	assert.NotEmpty(t, kimitranscript.FindSessionDir("legacy-uuid-1"))
+	assert.NotEmpty(t, kimitranscript.FindSessionDir("session_modern-1"))
+	assert.Empty(t, kimitranscript.FindSessionDir("does-not-exist"))
 }
 
 // Regression for #1564 review feedback: /list reported 0 messages for every

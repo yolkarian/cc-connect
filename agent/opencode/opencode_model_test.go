@@ -171,7 +171,9 @@ func writeCountingModelsBin(t *testing.T, countPath, gatePath string, lines []st
 
 func waitForModelsInPersistentCache(t *testing.T, cachePath string, want []string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// A fake agent subprocess fills the cache; a loaded host can take seconds
+	// to schedule it, so this bound is a safety net rather than an assertion.
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		cache, err := loadOpencodePersistentModelCache(cachePath)
 		if err == nil && cache != nil && len(cache.Models) == len(want) {
@@ -198,7 +200,9 @@ func waitForModelsInPersistentCache(t *testing.T, cachePath string, want []strin
 
 func waitForFileContent(t *testing.T, path, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// Same reasoning as waitForModelsInPersistentCache: the writer is a
+	// subprocess, not the test goroutine.
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil && strings.TrimSpace(string(data)) == want {

@@ -1485,33 +1485,14 @@ func getBaseURLEnvVarForProviderType(providerType string) string {
 	}
 }
 
-// summarizeInput produces a short human-readable description of tool input.
+// summarizeInput preserves structured tool input for downstream renderers.
+// Card renderers apply their own allowlist and redaction; reducing common tools
+// to one field here would discard parameters such as grep include/path and bash
+// descriptions before the renderer can inspect them.
 func summarizeInput(tool string, input any) string {
 	m, ok := input.(map[string]any)
 	if !ok {
 		return ""
-	}
-
-	switch tool {
-	case "Read", "Edit", "Write":
-		if fp, ok := m["file_path"].(string); ok {
-			return fp
-		}
-	case "Bash":
-		if cmd, ok := m["command"].(string); ok {
-			return cmd
-		}
-	case "Grep":
-		if p, ok := m["pattern"].(string); ok {
-			return p
-		}
-	case "Glob":
-		if p, ok := m["pattern"].(string); ok {
-			return p
-		}
-		if p, ok := m["glob_pattern"].(string); ok {
-			return p
-		}
 	}
 
 	b, err := json.Marshal(m)

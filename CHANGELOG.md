@@ -19,7 +19,13 @@ Beta since v1.5.0 stable — 16 merged PRs focused on Feishu/Weixin reliability,
 
 ## Unreleased
 
+### Added
+- **Feishu/Lark**: configurable Card 2.0 typewriter interval, step and strategy; omitted options retain Feishu defaults (#1956).
+
 ### Fixed
+- **Feishu**: With `inbound_coalesce_window_ms` enabled, card callbacks (AskUserQuestion option clicks, permission and command buttons) are no longer merged with text sent inside the window, so an option click is answered as that option instead of as free text or being dropped. Text already buffered for the session is delivered before the callback.
+- **Feishu**: Replies to bot menu clicks now send `receive_id_type=open_id` instead of `chat_id`, so menu items no longer fail every reply with `invalid receive_id` (code 230001); the reply context rebuilt after a restart infers the same type from the session key (#2259).
+- **Feishu**: Report WebSocket disconnect and reconnect state to the engine, including shared connections, so health checks and recovery reflect the connection (#693).
 - **Pi**: Merge custom providers with the built-in model catalog, resolve ambiguous aliases using the default provider, and filter duplicate or empty model entries. Reasoning levels follow the selected model, and switching models clears unsupported thinking overrides. Context windows now use catalog values for catalog-only models, with custom definitions taking precedence (#1872).
 - **Feishu**: a hung display-name lookup no longer holds an inbound message (in one case for 16 minutes, after which a stale `/new` ran): user/chat name lookups time out after 5s and fall back to the ID, the no-name answer for p2p chats is cached, card actions (`perm:`/`askq:`/`cmd:`) resolve names outside the callback, and failed lookup requests log at Warn (#2017, #2018).
 - **Feishu recall fallback probes**: throttle repeated active-message recall checks so long-running turns do not continuously call platform message APIs.

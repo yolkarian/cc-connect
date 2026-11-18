@@ -52,6 +52,7 @@ type discordStreamingCard struct {
 	mu         sync.Mutex
 	messageID  string
 	failed     bool
+	done       bool
 	lastUpdate time.Time
 	lastSent   string
 }
@@ -128,13 +129,20 @@ func (c *discordStreamingCard) Finalize(ctx context.Context, content string) err
 	if c.failed {
 		return nil
 	}
-	if strings.TrimSpace(content) == "" || content == c.lastSent {
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+	// The completed frame differs from the streaming one only by its colour, so
+	// it must be rendered even when the body text did not change; otherwise a
+	// turn whose last update already carried the full answer stays "working".
+	if c.done && content == c.lastSent {
 		return nil
 	}
 	head, overflow := splitDiscordCardBody(content, discordCardDescriptionLimit)
 	if err := c.renderParts(ctx, head, true); err != nil {
 		return err
 	}
+	c.done = true
 	c.lastSent = content
 	c.lastUpdate = time.Now()
 	for _, chunk := range overflow {

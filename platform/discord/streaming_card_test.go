@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/chenhg5/cc-connect/core"
@@ -93,16 +94,25 @@ func TestStreamingCardPostsOnceThenEdits(t *testing.T) {
 	}
 }
 
+// Repeated streaming frames with identical text must not spend edits; the
+// completed frame is the one exception (it repaints the status colour).
 func TestStreamingCardSkipsDuplicateContent(t *testing.T) {
 	api := &fakeCardAPI{}
 	card := newCardWithFake(api)
 	ctx := context.Background()
 	_ = card.Update(ctx, "same")
+	card.mu.Lock()
+	card.lastUpdate = time.Time{}
+	card.mu.Unlock()
+	_ = card.Update(ctx, "same")
+	if len(api.edits) != 0 {
+		t.Fatalf("duplicate streaming frames must not edit, got %v", api.edits)
+	}
 	if err := card.Finalize(ctx, "same"); err != nil {
 		t.Fatal(err)
 	}
-	if len(api.edits) != 0 {
-		t.Fatalf("unchanged content must not edit, got %v", api.edits)
+	if len(api.edits) != 1 {
+		t.Fatalf("finalize must repaint the completed frame once, got %v", api.edits)
 	}
 }
 
@@ -145,5 +155,34 @@ func TestCardStatusColor(t *testing.T) {
 	}
 	if got := buildDiscordCardEmbed("x", true).Color; got != 0x57F287 {
 		t.Fatalf("completed card colour = %#x", got)
+	}
+}
+
+// Finalize must repaint the completed colour even when the last streamed frame
+// already carried the identical text, otherwise the card looks stuck on
+// "working" for the whole turn.
+func TestFinalizeMarksDoneWhenContentUnchanged(t *testing.T) {
+	api := &fakeCardAPI{}
+	card := newCardWithFake(api)
+	ctx := context.Background()
+
+	if err := card.Update(ctx, "final answer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := card.Finalize(ctx, "final answer"); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.edits) != 1 {
+		t.Fatalf("finalize must repaint the completed frame, got %d edits", len(api.edits))
+	}
+	if !card.done {
+		t.Fatal("card must be marked done")
+	}
+	// A second finalize with the same text is a no-op.
+	if err := card.Finalize(ctx, "final answer"); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.edits) != 1 {
+		t.Fatalf("repeated finalize must not edit again, got %d edits", len(api.edits))
 	}
 }

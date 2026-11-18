@@ -6471,6 +6471,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					cardBody = strings.TrimRight(cardAnswerText.String(), " \t\r\n")
 				}
 				finalContent := buildCardContent(cardThinkingText, cardToolCalls, cardBody)
+				// Streaming cards (Discord/Slack/DingTalk) bypass the rich-card
+				// renderer, so they must append the engine-owned status footer
+				// themselves or lose the model/effort/context line entirely.
+				if footer := e.composeRichStatusFooter(false, turnStart, e.agent, state.agentSession, state.workspaceDir); footer != "" {
+					finalContent = strings.TrimRight(finalContent, "\n") + "\n\n" + footer
+				}
 				if err := streamCard.Finalize(e.ctx, finalContent); err != nil {
 					slog.Error("streaming card finalize failed, sending fallback", "error", err)
 					// Fallback: send the response as a normal message — but never
